@@ -396,6 +396,8 @@ if __name__ == "__main__":
     try:
         # 判断是否有命令行参数指定CUDA版本
         if args.force_cuda:
+            if args.force_cpu:
+                raise ValueError("错误：不能同时使用 --force_cuda 和 --force_cpu。") 
             cuda_version = args.force_cuda
             print(f"强制使用CUDA版本: {cuda_version}")
             install_dependencies(cuda_version, skip_torch=args.skip_torch, force_cpu=args.force_cpu)
