@@ -180,7 +180,7 @@ def install_dependencies(cuda_version=None, skip_torch=False, force_cpu=False):
     """安装依赖，包括匹配CUDA版本的PyTorch"""
     # 安装基本依赖
     print("\n===== 步骤 1/3: 安装基本依赖 =====")
-    run_command("pip install -r requirements.txt --upgrade -i http://mirrors.aliyun.com/pypi/simple/", show_output=True)
+    run_command("pip install -r requirements.txt --upgrade", show_output=True)
     
     # 如果跳过PyTorch安装，直接返回
     if skip_torch:
@@ -192,8 +192,8 @@ def install_dependencies(cuda_version=None, skip_torch=False, force_cpu=False):
     
     if force_cpu:
         print("强制使用CPU版本的PyTorch...")
-        run_command("pip uninstall -y torch torchvision torchaudio -i http://mirrors.aliyun.com/pypi/simple/", show_output=True)
-        run_command("pip install torch torchvision torchaudio -i http://mirrors.aliyun.com/pypi/simple/", show_output=True)
+        run_command("pip uninstall -y torch torchvision torchaudio", show_output=True)
+        run_command("pip install torch torchvision torchaudio", show_output=True)
         return
         
     if cuda_version is None:
@@ -213,23 +213,23 @@ def install_dependencies(cuda_version=None, skip_torch=False, force_cpu=False):
         print(f"CUDA标签: {cuda_label}")
         
         # 先卸载现有的PyTorch相关包
-        run_command("pip uninstall -y torch torchvision torchaudio -i http://mirrors.aliyun.com/pypi/simple/", show_output=True)
+        run_command("pip uninstall -y torch torchvision torchaudio", show_output=True)
         
         # 安装对应版本的PyTorch
         if cuda_label == "cpu":
-            run_command("pip install torch torchvision torchaudio -i http://mirrors.aliyun.com/pypi/simple/", show_output=True)
+            run_command("pip install torch torchvision torchaudio", show_output=True)
         else:
             # PyTorch安装可能需要较长时间，显示输出以提供反馈
             install_cmd = f"pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/{cuda_label}"
             run_command(install_cmd, show_output=True)
     else:
         print("未检测到CUDA或强制使用CPU，安装CPU版本的PyTorch...")
-        run_command("pip uninstall -y torch torchvision torchaudio -i http://mirrors.aliyun.com/pypi/simple/", show_output=True)
-        run_command("pip install torch torchvision torchaudio -i http://mirrors.aliyun.com/pypi/simple/", show_output=True)
+        run_command("pip uninstall -y torch torchvision torchaudio", show_output=True)
+        run_command("pip install torch torchvision torchaudio", show_output=True)
     
     # 安装其他特定依赖
     print("\n===== 步骤 3/3: 安装其他依赖 =====")
-    run_command("pip install faster-whisper -i http://mirrors.aliyun.com/pypi/simple/", show_output=True) #默认安装
+    run_command("pip install faster-whisper", show_output=True) #默认安装
     
     print("\n所有依赖安装完成！")
 
