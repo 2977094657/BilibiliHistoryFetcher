@@ -26,7 +26,7 @@ import kaldi_native_fbank as knf
 import numpy as np
 import onnxruntime as ort
 import soundfile as sf
-import torch
+# import torch
 
 
 def get_args():
@@ -132,33 +132,33 @@ class OnnxModel:
         self.decoder = ort.InferenceSession(
             decoder,
             sess_options=self.session_opts,
-            providers=["CPUExecutionProvider"],
+            providers=ort.get_available_providers(),
         )
 
     def run_encoder(
         self,
-        mel: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        mel: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         n_layer_cross_k, n_layer_cross_v = self.encoder.run(
             [
                 self.encoder.get_outputs()[0].name,
                 self.encoder.get_outputs()[1].name,
             ],
             {
-                self.encoder.get_inputs()[0].name: mel.numpy(),
+                self.encoder.get_inputs()[0].name: mel,
             },
         )
-        return torch.from_numpy(n_layer_cross_k), torch.from_numpy(n_layer_cross_v)
+        return n_layer_cross_k, n_layer_cross_v
 
     def run_decoder(
         self,
-        tokens: torch.Tensor,
-        n_layer_self_k_cache: torch.Tensor,
-        n_layer_self_v_cache: torch.Tensor,
-        n_layer_cross_k: torch.Tensor,
-        n_layer_cross_v: torch.Tensor,
-        offset: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        tokens: np.ndarray,
+        n_layer_self_k_cache: np.ndarray,
+        n_layer_self_v_cache: np.ndarray,
+        n_layer_cross_k: np.ndarray,
+        n_layer_cross_v: np.ndarray,
+        offset: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         logits, out_n_layer_self_k_cache, out_n_layer_self_v_cache = self.decoder.run(
             [
                 self.decoder.get_outputs()[0].name,
@@ -166,33 +166,35 @@ class OnnxModel:
                 self.decoder.get_outputs()[2].name,
             ],
             {
-                self.decoder.get_inputs()[0].name: tokens.numpy(),
-                self.decoder.get_inputs()[1].name: n_layer_self_k_cache.numpy(),
-                self.decoder.get_inputs()[2].name: n_layer_self_v_cache.numpy(),
-                self.decoder.get_inputs()[3].name: n_layer_cross_k.numpy(),
-                self.decoder.get_inputs()[4].name: n_layer_cross_v.numpy(),
-                self.decoder.get_inputs()[5].name: offset.numpy(),
+                self.decoder.get_inputs()[0].name: tokens,
+                self.decoder.get_inputs()[1].name: n_layer_self_k_cache,
+                self.decoder.get_inputs()[2].name: n_layer_self_v_cache,
+                self.decoder.get_inputs()[3].name: n_layer_cross_k,
+                self.decoder.get_inputs()[4].name: n_layer_cross_v,
+                self.decoder.get_inputs()[5].name: offset,
             },
         )
         return (
-            torch.from_numpy(logits),
-            torch.from_numpy(out_n_layer_self_k_cache),
-            torch.from_numpy(out_n_layer_self_v_cache),
+            logits,
+            out_n_layer_self_k_cache,
+            out_n_layer_self_v_cache,
         )
 
-    def get_self_cache(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_self_cache(self) -> Tuple[np.ndarray, np.ndarray]:
         batch_size = 1
-        n_layer_self_k_cache = torch.zeros(
-            self.n_text_layer,
+        n_layer_self_k_cache = np.zeros(
+            (self.n_text_layer,
             batch_size,
             self.n_text_ctx,
-            self.n_text_state,
+            self.n_text_state,),
+            dtype=np.float32,
         )
-        n_layer_self_v_cache = torch.zeros(
-            self.n_text_layer,
+        n_layer_self_v_cache = np.zeros(
+            (self.n_text_layer,
             batch_size,
             self.n_text_ctx,
-            self.n_text_state,
+            self.n_text_state,),
+            dtype=np.float32,
         )
         return n_layer_self_k_cache, n_layer_self_v_cache
 
@@ -212,10 +214,10 @@ class OnnxModel:
         logits[self.translate] = float("-inf")
 
     def detect_language(
-        self, n_layer_cross_k: torch.Tensor, n_layer_cross_v: torch.Tensor
+        self, n_layer_cross_k: np.ndarray, n_layer_cross_v: np.ndarray
     ) -> int:
-        tokens = torch.tensor([[self.sot]], dtype=torch.int64)
-        offset = torch.zeros(1, dtype=torch.int64)
+        tokens = np.array([[self.sot]], dtype=np.int64)
+        offset = np.zeros(1, dtype=np.int64)
         n_layer_self_k_cache, n_layer_self_v_cache = self.get_self_cache()
 
         logits, n_layer_self_k_cache, n_layer_self_v_cache = self.run_decoder(
@@ -227,7 +229,7 @@ class OnnxModel:
             offset=offset,
         )
         logits = logits.reshape(-1)
-        mask = torch.ones(logits.shape[0], dtype=torch.int64)
+        mask = np.ones(logits.shape[0], dtype=np.int64)
         mask[self.all_language_tokens] = 0
         logits[mask != 0] = float("-inf")
         lang_id = logits.argmax().item()
@@ -255,7 +257,7 @@ def load_audio(filename: str) -> Tuple[np.ndarray, int]:
     return samples, sample_rate
 
 
-def compute_features(filename: str, dim: int = 80) -> torch.Tensor:
+def compute_features(filename: str, dim: int = 80) -> np.ndarray:
     """
     Args:
       filename:
@@ -278,19 +280,20 @@ def compute_features(filename: str, dim: int = 80) -> torch.Tensor:
     online_whisper_fbank.input_finished()
     for i in range(online_whisper_fbank.num_frames_ready):
         f = online_whisper_fbank.get_frame(i)
-        f = torch.from_numpy(f)
+        # f = torch.from_numpy(f)
         features.append(f)
 
-    features = torch.stack(features)
+    features = np.stack(features)
 
-    log_spec = torch.clamp(features, min=1e-10).log10()
-    log_spec = torch.maximum(log_spec, log_spec.max() - 8.0)
+    log_spec = np.log10(np.clip(features, min=1e-10))
+    log_spec = np.maximum(log_spec, log_spec.max() - 8.0)
     mel = (log_spec + 4.0) / 4.0
     # mel (T, 80)
 
     # We pad 1500 frames at the end so that it is able to detect eot
     # You can use another value instead of 1500.
-    mel = torch.nn.functional.pad(mel, (0, 0, 0, 1500), "constant", 0)
+    #mel = torch.nn.functional.pad(mel, (0, 0, 0, 1500), "constant", 0)
+    mel = np.pad(mel, pad_width=((0, 1500), (0, 0)), mode='constant', constant_values=0)
     # Note that if it throws for a multilingual model,
     # please use a larger value, say 300
 
@@ -298,12 +301,14 @@ def compute_features(filename: str, dim: int = 80) -> torch.Tensor:
     if mel.shape[0] > target:
         # -50 so that there are some zero tail paddings.
         mel = mel[: target - 50]
-        mel = torch.nn.functional.pad(mel, (0, 0, 0, 50), "constant", 0)
+        #mel = torch.nn.functional.pad(mel, (0, 0, 0, 50), "constant", 0)
+        mel = np.pad(mel, pad_width=((0, 50), (0, 0)), mode='constant', constant_values=0)
 
     # We don't need to pad it to 30 seconds now!
     #  mel = torch.nn.functional.pad(mel, (0, 0, 0, target - mel.shape[0]), "constant", 0)
 
-    mel = mel.t().unsqueeze(0)
+    #mel = mel.T.unsqueeze(0)
+    mel = np.expand_dims(mel.T, axis=0)
 
     return mel
 
@@ -347,8 +352,8 @@ def main():
     n_layer_self_k_cache, n_layer_self_v_cache = model.get_self_cache()
 
     print(model.sot_sequence)
-    tokens = torch.tensor([model.sot_sequence], dtype=torch.int64)
-    offset = torch.zeros(1, dtype=torch.int64)
+    tokens = np.array([model.sot_sequence], dtype=np.int64)
+    offset = np.zeros(1, dtype=np.int64)
     logits, n_layer_self_k_cache, n_layer_self_v_cache = model.run_decoder(
         tokens=tokens,
         n_layer_self_k_cache=n_layer_self_k_cache,
@@ -363,13 +368,13 @@ def main():
     model.suppress_tokens(logits, is_initial=True)
     #  logits = logits.softmax(dim=-1)
     # for greedy search, we don't need to compute softmax or log_softmax
-    max_token_id = logits.argmax(dim=-1)
+    max_token_id = logits.argmax(axis=-1)
     results = []
     for i in range(model.n_text_ctx):
         if max_token_id == model.eot:
             break
         results.append(max_token_id.item())
-        tokens = torch.tensor([[results[-1]]])
+        tokens = np.array([[results[-1]]])
 
         logits, n_layer_self_k_cache, n_layer_self_v_cache = model.run_decoder(
             tokens=tokens,
@@ -382,7 +387,7 @@ def main():
         offset += 1
         logits = logits[0, -1]
         model.suppress_tokens(logits, is_initial=False)
-        max_token_id = logits.argmax(dim=-1)
+        max_token_id = logits.argmax(axis=-1)
     token_table = load_tokens(args.tokens)
     s = b""
     for i in results:
