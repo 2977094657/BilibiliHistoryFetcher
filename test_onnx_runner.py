@@ -85,8 +85,11 @@ class OnnxModel:
         decoder: str,
     ):
         session_opts = ort.SessionOptions()
-        session_opts.inter_op_num_threads = 1
-        session_opts.intra_op_num_threads = 4
+        # doc: https://onnxruntime.ai/docs/performance/tune-performance/threading.html
+        # session_opts.inter_op_num_threads = 1
+        # session_opts.intra_op_num_threads = 0 
+
+        # session_opts.log_severity_level = 1 # onnx debug log
 
         self.session_opts = session_opts
 
@@ -97,7 +100,7 @@ class OnnxModel:
         self.encoder = ort.InferenceSession(
             encoder,
             sess_options=self.session_opts,
-            providers=["CPUExecutionProvider"],
+            providers=ort.get_available_providers()
         )
 
         meta = self.encoder.get_modelmeta().custom_metadata_map
