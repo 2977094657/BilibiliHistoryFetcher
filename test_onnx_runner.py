@@ -18,16 +18,25 @@
 
 # test command: python test_onnx_runner.py --encoder sherpa-onnx-whisper-base\base-encoder.onnx --decoder sherpa-onnx-whisper-base\base-decoder.onnx --tokens sherpa-onnx-whisper-base\base-tokens.txt --language zh --task transcribe test.wav 
 
+# package: pyinstaller
+# pip install pyinstaller
+# pyinstaller test_onnx_runner.py
+# ./test_onnx_runner.exe --encoder sherpa-onnx-whisper-base\base-encoder.onnx --decoder sherpa-onnx-whisper-base\base-decoder.onnx --tokens sherpa-onnx-whisper-base\base-tokens.txt --language zh --task transcribe test.wav 
+
+# package: nuitka
+# pip install nuitka
+# python -m nuitka --mode=standalone --noinclude-numba-mode=nofollow test_onnx_runner.py
+# ./test_onnx_runner.exe --encoder sherpa-onnx-whisper-base\base-encoder.onnx --decoder sherpa-onnx-whisper-base\base-decoder.onnx --tokens sherpa-onnx-whisper-base\base-tokens.txt --language zh --task transcribe test.wav
+
 import argparse
 import base64
 from typing import Tuple
 
 import kaldi_native_fbank as knf
 import numpy as np
-import onnxruntime as ort
+import onnxruntime as ort #FIXME: 打包时导致torch引入
 import soundfile as sf
-# import torch
-
+import librosa
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -267,7 +276,6 @@ def compute_features(filename: str, dim: int = 80) -> np.ndarray:
     """
     wave, sample_rate = load_audio(filename)
     if sample_rate != 16000:
-        import librosa
 
         wave = librosa.resample(wave, orig_sr=sample_rate, target_sr=16000)
         sample_rate = 16000
