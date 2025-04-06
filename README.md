@@ -42,7 +42,27 @@
    1. 如果你是用`cuda`镜像，则使用`docker run -d -v ./config:/app/config -p 8899:8899 --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --name bilibili-api bilibili-api:dev`创建容器。
    1. 否则，请使用`docker run -d -v ./config:/app/config -p 8899:8899 --name bilibili-api bilibili-api:dev`创建容器。
 
-### 源码安装
+### 使用`uv`安装
+
+首先，根据[官方文档](https://docs.astral.sh/uv/getting-started/installation/)安装``uv`。
+
+在项目根目录下运行`uv sync`。
+
+如果你是用 NVIDIA 显卡并希望使用 CUDA 加速推理，请使用如下的指令安装`pytorch`：
+
+```bash
+UV_TORCH_BACKEND=auto uv pip install torch torchaudio torchvision
+```
+
+否则，使用如下的指令安装`pytorch`：
+
+```bash
+UV_TORCH_BACKEND=cpu uv pip install torch torchaudio torchvision
+```
+
+最后，使用`uv run main.py`运行程序。
+
+### 使用源码安装
 
 1. **安装依赖**
 
