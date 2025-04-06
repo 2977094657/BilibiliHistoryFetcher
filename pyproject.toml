@@ -1,0 +1,34 @@
+[project]
+name = "bilibilihistoryfetcher"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "aiohttp~=3.11.13",
+  "email-validator>=2.1.0",
+  "fastapi~=0.115.8",
+  "faster-whisper>=1.1.1",
+  "httpx~=0.28.1",
+  "jieba~=0.42.1",
+  "jinja2~=3.1.5",
+  "numpy~=1.26.4",
+  "openpyxl~=3.1.5",
+  "pandas~=2.2.3",
+  "pillow~=10.2.0",
+  "psutil>=5.9.0",
+  "pydantic~=2.10.6",
+  "pyecharts~=2.0.8",
+  "pymysql~=1.1.1",
+  "python-dateutil>=2.8.2",
+  "pyyaml~=6.0.2",
+  "qrcode~=8.0",
+  "requests~=2.32.3",
+  "schedule~=1.2.2",
+  "scikit-learn~=1.5.2",
+  "snownlp~=0.12.3",
+  "tqdm>=4.66.0",
+  "urllib3~=2.3.0",
+  "uvicorn~=0.32.1",
+  "yutto~=2.0.0",
+]
