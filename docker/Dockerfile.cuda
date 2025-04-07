@@ -18,4 +18,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # https://docs.astral.sh/uv/guides/integration/pytorch/#automatic-backend-selection
 RUN uv pip install torch torchaudio torchvision --torch-backend=cu126 --preview
 
+# don't use default value substitution here due to: https://stackoverflow.com/a/65119275/20030543
+# this line may cause warning that LD_LIBRARY_PATH isn't defined, just ignore it.
+ENV LD_LIBRARY_PATH=/app/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
+
 CMD ["uv", "run", "main.py"]
