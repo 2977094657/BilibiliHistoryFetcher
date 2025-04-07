@@ -37,6 +37,7 @@ import numpy as np
 import onnxruntime as ort #FIXME: 打包时导致torch引入
 import soundfile as sf
 import librosa
+from tqdm import tqdm
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -378,7 +379,7 @@ def main():
     # for greedy search, we don't need to compute softmax or log_softmax
     max_token_id = logits.argmax(axis=-1)
     results = []
-    for i in range(model.n_text_ctx):
+    for i in tqdm(range(model.n_text_ctx)):
         if max_token_id == model.eot:
             break
         results.append(max_token_id.item())
