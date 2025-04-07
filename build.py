@@ -1,10 +1,11 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
+
 import yaml
-import copy
-import re
+
 
 def build(build_type):
     """执行打包过程
@@ -586,7 +587,7 @@ def modify_spec_config_path(spec_file, original_path, new_path):
         return False
 
 def post_build_copy(dist_dir):
-    """构建后复制配置文件到根目录，解决配置文件路径问题
+    """构建后处理，确认_internal/config目录存在
     
     Args:
         dist_dir: 构建输出目录的路径，如 dist/BilibiliHistoryAnalyzer_Full
@@ -598,27 +599,22 @@ def post_build_copy(dist_dir):
             print(f"\n警告: 找不到内部配置目录: {internal_config}")
             return False
         
-        # 创建根目录的config文件夹
-        root_config = os.path.join(dist_dir, 'config')
-        if not os.path.exists(root_config):
-            os.makedirs(root_config, exist_ok=True)
-            print(f"\n已创建根目录配置文件夹: {root_config}")
+        print(f"\n确认内部配置目录存在: {internal_config}")
+        print(f"应用将从此目录加载所有配置文件")
         
-        # 复制所有配置文件
-        copy_count = 0
-        import shutil
-        for file in os.listdir(internal_config):
-            source = os.path.join(internal_config, file)
-            target = os.path.join(root_config, file)
-            if os.path.isfile(source):
-                shutil.copy2(source, target)
-                copy_count += 1
-                print(f"已复制配置文件: {file}")
+        # 添加README提示用户修改配置文件位置
+        readme_path = os.path.join(dist_dir, 'README_CONFIG.txt')
+        with open(readme_path, 'w', encoding='utf-8') as f:
+            f.write("配置文件说明\n")
+            f.write("===========\n\n")
+            f.write("所有配置文件位于 _internal/config 目录中\n")
+            f.write("- config.yaml: 主配置文件，包含B站认证、邮件、API等配置\n")
+            f.write("- scheduler_config.yaml: 计划任务配置文件\n")
         
-        print(f"\n配置文件复制完成: 已复制 {copy_count} 个文件到 {root_config}")
+        print(f"已创建配置说明文件: {readme_path}")
         return True
     except Exception as e:
-        print(f"\n复制配置文件时出错: {e}")
+        print(f"\n构建后处理时出错: {e}")
         import traceback
         print(traceback.format_exc())
         return False

@@ -72,8 +72,8 @@ yutto:
     login_strict: false
   
   resource:
-    # 不下载字幕
-    require_subtitle: false
+    # 下载字幕
+    require_subtitle: true
     # 默认是否仅下载音频
     only_audio: false
   

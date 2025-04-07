@@ -333,6 +333,10 @@ class ImageDownloader:
         self.total_covers_to_download = 0
         self.total_avatars_to_download = 0
         
+        # 添加初始total值的存储
+        self.initial_covers_total = 0
+        self.initial_avatars_total = 0
+        
         # 确保目录存在
         self.base_path = get_output_path('images')
         self.covers_path = os.path.join(self.base_path, 'covers')
@@ -592,6 +596,11 @@ class ImageDownloader:
             
             print(f"将处理以下年份: {years}")
             
+            # 获取当前已下载的数量
+            current_stats = self.db.get_stats()
+            current_covers_downloaded = current_stats['covers']['downloaded']
+            current_avatars_downloaded = current_stats['avatars']['downloaded']
+            
             # 预先计算总下载数量
             total_cover_urls = []
             total_avatar_urls = []
@@ -608,10 +617,23 @@ class ImageDownloader:
             with self.lock:
                 self.total_covers_to_download = len(new_cover_urls)
                 self.total_avatars_to_download = len(new_avatar_urls)
+                
+                # 保存初始total值 = 当前已下载 + 计划下载
+                self.initial_covers_total = current_covers_downloaded + self.total_covers_to_download
+                self.initial_avatars_total = current_avatars_downloaded + self.total_avatars_to_download
+                print(f"\n保存初始total值:")
+                print(f"- 封面: {self.initial_covers_total} (已下载: {current_covers_downloaded} + 计划: {self.total_covers_to_download})")
+                print(f"- 头像: {self.initial_avatars_total} (已下载: {current_avatars_downloaded} + 计划: {self.total_avatars_to_download})")
             
             print(f"\n总计需要下载的图片:")
             print(f"封面: {self.total_covers_to_download}/{len(total_cover_urls)} 个")
             print(f"头像: {self.total_avatars_to_download}/{len(total_avatar_urls)} 个")
+            
+            # 如果没有需要下载的图片，直接返回
+            if self.total_covers_to_download == 0 and self.total_avatars_to_download == 0:
+                print("\n没有新的图片需要下载，任务完成")
+                self.is_downloading = False
+                return
             
             # 创建下载线程池
             num_threads = 20  # 增加到20个线程
@@ -689,6 +711,9 @@ class ImageDownloader:
             for t in threads:
                 t.join(timeout=5)
             
+            # 确保状态标记为已完成
+            self.is_downloading = False
+            
             print("\n=== 下载统计 ===")
             stats = self.get_download_stats()
             print(f"封面图片:")
@@ -712,7 +737,16 @@ class ImageDownloader:
             print("错误堆栈:")
             print(traceback.format_exc())
         finally:
+            # 确保无论发生什么情况，状态都会设置为已完成
+            print("\n结束下载任务，设置状态为已完成")
             self.is_downloading = False
+            
+            # 如果下载已完成且所有图片都已下载，重置计数器
+            if self.total_covers_to_download == 0 and self.total_avatars_to_download == 0:
+                print("下载已完成，重置计数器")
+                self.initial_covers_total = 0
+                self.initial_avatars_total = 0
+            
             if 'conn' in locals():
                 conn.close()
                 print("数据库连接已关闭")
@@ -747,15 +781,54 @@ class ImageDownloader:
                 self.total_covers_to_download = len(new_cover_urls)
                 self.total_avatars_to_download = len(new_avatar_urls)
                 
+                # 更新初始total值 - 仅在非下载状态下
+                self.initial_covers_total = stats['covers']['downloaded'] + self.total_covers_to_download
+                self.initial_avatars_total = stats['avatars']['downloaded'] + self.total_avatars_to_download
+                
                 print(f"潜在下载数量:")
                 print(f"- 封面: {self.total_covers_to_download}")
                 print(f"- 头像: {self.total_avatars_to_download}")
+                
+                print(f"更新初始total值:")
+                print(f"- 封面: {self.initial_covers_total}")
+                print(f"- 头像: {self.initial_avatars_total}")
+        else:
+            # 如果正在下载，根据初始total和当前下载量计算待下载数量
+            # 初始total应该保持不变，只调整total_planned
+            self.total_covers_to_download = max(0, self.initial_covers_total - stats['covers']['downloaded'])
+            self.total_avatars_to_download = max(0, self.initial_avatars_total - stats['avatars']['downloaded'])
+            
+            print(f"下载进度:")
+            print(f"- 封面: 已下载 {stats['covers']['downloaded']}/{self.initial_covers_total}，剩余 {self.total_covers_to_download}")
+            print(f"- 头像: 已下载 {stats['avatars']['downloaded']}/{self.initial_avatars_total}，剩余 {self.total_avatars_to_download}")
+            
+            # 检查下载是否实际已完成
+            if (self.total_covers_to_download == 0 and self.total_avatars_to_download == 0 and
+                stats['covers']['downloaded'] == self.initial_covers_total and
+                stats['avatars']['downloaded'] == self.initial_avatars_total):
+                print("\n检测到所有图片已下载完成，自动设置下载状态为已完成")
+                self.is_downloading = False
+        
+        # 更新统计信息
+        # 对于下载状态，使用初始固定total值
+        # 对于非下载状态，使用downloaded + total_planned
+        if self.is_downloading:
+            stats['covers']['total'] = self.initial_covers_total
+            stats['avatars']['total'] = self.initial_avatars_total
+        else:
+            stats['covers']['total'] = stats['covers']['downloaded'] + self.total_covers_to_download
+            stats['avatars']['total'] = stats['avatars']['downloaded'] + self.total_avatars_to_download
+        
+        print(f"最终统计结果:")
+        print(f"- 封面总数: {stats['covers']['total']}")
+        print(f"- 封面已下载: {stats['covers']['downloaded']}")
+        print(f"- 封面待下载: {self.total_covers_to_download}")
+        print(f"- 头像总数: {stats['avatars']['total']}")
+        print(f"- 头像已下载: {stats['avatars']['downloaded']}")
+        print(f"- 头像待下载: {self.total_avatars_to_download}")
+        print(f"- 下载状态: {'正在下载' if self.is_downloading else '已完成'}")
         
         # 添加总下载数量信息
-        print(f"\n当前设置的总下载数:")
-        print(f"- 封面: {self.total_covers_to_download}")
-        print(f"- 头像: {self.total_avatars_to_download}")
-        
         stats['covers']['total_planned'] = self.total_covers_to_download
         stats['avatars']['total_planned'] = self.total_avatars_to_download
         
@@ -928,6 +1001,12 @@ class ImageDownloader:
         
         # 设置停止标志
         self.is_downloading = False
+        
+        # 重置下载相关的初始值
+        self.total_covers_to_download = 0
+        self.total_avatars_to_download = 0
+        self.initial_covers_total = 0
+        self.initial_avatars_total = 0
         
         # 清空下载队列
         while not self.download_queue.empty():

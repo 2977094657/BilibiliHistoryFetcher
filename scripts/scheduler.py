@@ -18,21 +18,29 @@ logging.basicConfig(
 )
 
 class TaskScheduler:
-    def __init__(self, config_path='config/scheduler_config.yaml'):
-        self.base_url = "http://localhost:8000"
+    def __init__(self, config_path=None):
+        # 设置配置文件路径
+        if config_path is None:
+            from scripts.utils import get_config_path
+            config_path = get_config_path('scheduler_config.yaml')
+            
+        self.config_path = config_path
+        self.load_config()
+        self.task_chains = {}
+        self._init_task_status()
+        self.base_url = "http://localhost:8899"
         self.tasks = {}
-        self.load_config(config_path)
         self.start_time = datetime.now()
         logging.info(f"调度器初始化完成，启动时间: {self.start_time}")
 
-    def load_config(self, config_path):
+    def load_config(self):
         """加载调度配置"""
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
                 self.base_url = config.get('base_url', self.base_url)
                 self.tasks = config.get('tasks', {})
-            logging.info(f"成功加载配置文件: {config_path}")
+            logging.info(f"成功加载配置文件: {self.config_path}")
             logging.info(f"已配置的任务: {list(self.tasks.keys())}")
         except Exception as e:
             logging.error(f"加载配置文件失败: {e}")

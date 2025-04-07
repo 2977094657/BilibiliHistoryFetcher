@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request, Query
 
 from scripts.scheduler_db_enhanced import EnhancedSchedulerDB
 from scripts.scheduler_manager import SchedulerManager
-from scripts.utils import get_base_path
+from scripts.utils import get_config_path as utils_get_config_path
 
 # 配置日志记录
 logger = logging.getLogger(__name__)
@@ -24,19 +24,8 @@ def get_scheduler_db():
 
 def get_config_path():
     """获取配置文件路径"""
-    base_path = get_base_path()
-    config_path = os.path.join(base_path, 'config', 'scheduler_config.yaml')
-    
-    if not os.path.exists(config_path):
-        alternative_paths = [
-            os.path.join(os.getcwd(), 'config', 'scheduler_config.yaml'),
-        ]
-        for alt_path in alternative_paths:
-            if os.path.exists(alt_path):
-                config_path = alt_path
-                break
-    
-    return config_path
+    # 使用utils中的公共函数来保持一致性
+    return utils_get_config_path('scheduler_config.yaml')
 
 def save_config(config):
     """保存配置到文件"""

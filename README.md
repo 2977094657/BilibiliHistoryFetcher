@@ -17,6 +17,7 @@
 - [x] 获取收藏夹
   - [x] 批量收藏
   - [x] 修复失效视频
+  - [x] 一键下载收藏夹所有视频
 
 ## 系统要求
 
@@ -97,6 +98,7 @@ server:
   port: 8899
 ```
 
+
 3. **运行程序**
 ```bash
 python main.py
@@ -124,6 +126,8 @@ tasks:
     requires:
       - fetch_history
 ```
+
+> **注意**：当程序打包为可执行文件后，计划任务配置文件位于 `_internal/config/scheduler_config.yaml`。
 
 ## 应用打包
 

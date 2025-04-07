@@ -203,7 +203,9 @@ class EnhancedSchedulerDB(SchedulerDB):
     def _import_config_data(self):
         """从配置文件导入初始数据"""
         try:
-            config_path = os.path.join('config', 'scheduler_config.yaml')
+            from scripts.utils import get_config_path
+            config_path = get_config_path('scheduler_config.yaml')
+            
             if not os.path.exists(config_path):
                 print(f"配置文件不存在: {config_path}")
                 return
@@ -1629,4 +1631,25 @@ class EnhancedSchedulerDB(SchedulerDB):
         except Exception as e:
             self.conn.rollback()
             logger.error(f"更新任务下次执行时间失败: {str(e)}")
+            return False
+
+    def load_config(self):
+        """加载调度器配置"""
+        try:
+            from scripts.utils import get_config_path
+            config_path = get_config_path('scheduler_config.yaml')
+            
+            if not os.path.exists(config_path):
+                return False
+                
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+                
+            if 'tasks' not in config:
+                return False
+                
+            self.config = config
+            return True
+        except Exception as e:
+            logger.error(f"加载配置文件失败: {e}")
             return False

@@ -60,13 +60,6 @@ def load_config() -> Dict[str, Any]:
         
         if missing_fields:
             raise ValueError(f"邮件配置缺少必要字段: {', '.join(missing_fields)}")
-            
-        # 打印配置信息（不包含敏感信息）
-        logging.info("已加载配置:")
-        logging.info(f"SMTP服务器: {email_config.get('smtp_server')}")
-        logging.info(f"SMTP端口: {email_config.get('smtp_port')}")
-        logging.info(f"发件人: {email_config.get('sender')}")
-        logging.info(f"收件人: {email_config.get('receiver')}")
         
         return config
     except Exception as e:

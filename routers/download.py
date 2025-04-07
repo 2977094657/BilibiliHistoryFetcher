@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 
@@ -90,6 +90,19 @@ class DownloadRequest(BaseModel):
     download_cover: Optional[bool] = Field(True, description="是否下载视频封面")
     only_audio: Optional[bool] = Field(False, description="是否仅下载音频")
     cid: int = Field(..., description="视频的 CID，用于分类存储和音频文件命名前缀")
+
+class UserSpaceDownloadRequest(BaseModel):
+    user_id: str = Field(..., description="用户UID，例如：100969474")
+    sessdata: Optional[str] = Field(None, description="用户的 SESSDATA")
+    download_cover: Optional[bool] = Field(True, description="是否下载视频封面")
+    only_audio: Optional[bool] = Field(False, description="是否仅下载音频")
+
+class FavoriteDownloadRequest(BaseModel):
+    user_id: str = Field(..., description="用户UID，例如：100969474")
+    fid: Optional[str] = Field(None, description="收藏夹ID，不提供时下载所有收藏夹")
+    sessdata: Optional[str] = Field(None, description="用户的 SESSDATA")
+    download_cover: Optional[bool] = Field(True, description="是否下载视频封面")
+    only_audio: Optional[bool] = Field(False, description="是否仅下载音频")
 
 async def stream_process_output(process: subprocess.Popen):
     """实时流式输出进程的输出"""
@@ -239,7 +252,8 @@ async def download_video(request: DownloadRequest):
             request.url,
             '--dir', download_dir,
             '--tmp-dir', tmp_dir,
-            '--subpath-template', f'{{title}}_{{username}}_{{download_date@%Y%m%d_%H%M%S}}_{request.cid}/{{title}}_{request.cid}'
+            '--subpath-template', f'{{title}}_{{username}}_{{download_date@%Y%m%d_%H%M%S}}_{request.cid}/{{title}}_{request.cid}',
+            '--with-metadata'  # 添加元数据文件保存
         ]
         
         # 根据用户选择决定是否下载封面
@@ -742,6 +756,45 @@ async def list_downloaded_videos(search_term: Optional[str] = None, limit: int =
                 if not file_match:
                     continue
             
+            # 检查是否存在元数据文件
+            metadata_file = os.path.join(root, "metadata.json")
+            metadata = None
+            if os.path.exists(metadata_file):
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        import json
+                        metadata = json.load(f)
+                    print(f"【调试】从元数据文件获取数据: {metadata_file}")
+                    
+                    # 显示元数据文件内容摘要
+                    if 'title' in metadata:
+                        print(f"【调试】元数据标题: {metadata['title']}")
+                    if 'id' in metadata:
+                        if 'bvid' in metadata['id']:
+                            print(f"【调试】元数据BVID: {metadata['id']['bvid']}")
+                        if 'cid' in metadata['id']:
+                            print(f"【调试】元数据CID: {metadata['id']['cid']}")
+                    if 'owner' in metadata and 'name' in metadata['owner']:
+                        print(f"【调试】元数据作者: {metadata['owner']['name']}")
+                    if 'cover_url' in metadata:
+                        print(f"【调试】元数据封面: {metadata['cover_url']}")
+                    
+                except Exception as e:
+                    print(f"读取元数据文件出错: {str(e)}")
+            
+            # 尝试查找.nfo文件
+            nfo_files = [f for f in files if f.endswith('.nfo')]
+            nfo_data = None
+            if nfo_files:
+                try:
+                    import xml.etree.ElementTree as ET
+                    nfo_file = os.path.join(root, nfo_files[0])
+                    tree = ET.parse(nfo_file)
+                    nfo_data = tree.getroot()
+                    print(f"【调试】从NFO文件获取数据: {nfo_file}")
+                except Exception as e:
+                    print(f"读取NFO文件出错: {str(e)}")
+            
             for file in files:
                 # 检查是否为视频或音频文件
                 if file.endswith(('.mp4', '.flv', '.m4a', '.mp3')):
@@ -833,9 +886,139 @@ async def list_downloaded_videos(search_term: Optional[str] = None, limit: int =
                     "author_mid": None
                 }
                 
-                # 如果有CID，尝试通过API获取更多信息
-                if cid and cid.isdigit():
+                # 如果存在元数据，优先使用元数据中的信息
+                if metadata:
                     try:
+                        # 提取bvid和cid
+                        if 'id' in metadata:
+                            video_id = metadata['id']
+                            if 'bvid' in video_id:
+                                video_info["bvid"] = video_id['bvid']
+                            if 'cid' in video_id and not video_info["cid"]:
+                                video_info["cid"] = str(video_id['cid'])
+                        
+                        # 提取标题
+                        if 'title' in metadata and metadata['title']:
+                            video_info["title"] = metadata['title']
+                        
+                        # 提取封面URL
+                        if 'cover_url' in metadata and metadata['cover_url']:
+                            video_info["cover"] = metadata['cover_url']
+                        
+                        # 提取作者信息
+                        if 'owner' in metadata:
+                            owner = metadata['owner']
+                            if 'name' in owner:
+                                video_info["author_name"] = owner['name']
+                            if 'face' in owner:
+                                video_info["author_face"] = owner['face']
+                            if 'mid' in owner:
+                                video_info["author_mid"] = owner['mid']
+                        
+                        # 处理图片URL
+                        if _process_image_url:
+                            # 使用导入的函数处理图片URL
+                            if video_info["cover"]:
+                                video_info["cover"] = _process_image_url(video_info["cover"], 'covers', use_local_images)
+                            if video_info["author_face"]:
+                                video_info["author_face"] = _process_image_url(video_info["author_face"], 'avatars', use_local_images)
+                        elif hasattr(sys.modules.get('routers.history'), '_process_image_url'):
+                            # 如果导入失败但模块运行时可访问，再次尝试
+                            process_url = getattr(sys.modules.get('routers.history'), '_process_image_url')
+                            if video_info["cover"]:
+                                video_info["cover"] = process_url(video_info["cover"], 'covers', use_local_images)
+                            if video_info["author_face"]:
+                                video_info["author_face"] = process_url(video_info["author_face"], 'avatars', use_local_images)
+                        elif use_local_images:
+                            # 简单的URL处理逻辑，作为后备方案
+                            import hashlib
+                            if video_info["cover"]:
+                                cover_hash = hashlib.md5(video_info["cover"].encode()).hexdigest()
+                                video_info["cover"] = f"http://localhost:8899/images/local/covers/{cover_hash}"
+                            if video_info["author_face"]:
+                                avatar_hash = hashlib.md5(video_info["author_face"].encode()).hexdigest()
+                                video_info["author_face"] = f"http://localhost:8899/images/local/avatars/{avatar_hash}"
+                        
+                        print(f"【调试】从元数据获取到视频信息: {video_info['title']}，封面URL: {video_info['cover'][:50]}...")
+                    except Exception as e:
+                        print(f"解析元数据时出错: {str(e)}")
+                
+                # 如果有NFO数据且信息不完整，尝试从NFO提取
+                if nfo_data and (not video_info["cover"] or not video_info["author_name"] or not video_info["author_face"]):
+                    try:
+                        # 提取标题
+                        title_elem = nfo_data.find('title')
+                        if title_elem is not None and title_elem.text and not video_info["title"]:
+                            video_info["title"] = title_elem.text
+                        
+                        # 提取封面URL
+                        thumb_elem = nfo_data.find('thumb')
+                        if thumb_elem is not None and thumb_elem.text and not video_info["cover"]:
+                            video_info["cover"] = thumb_elem.text
+                        
+                        # 提取作者信息
+                        actor_elem = nfo_data.find('actor')
+                        if actor_elem is not None:
+                            # 作者名
+                            actor_name = actor_elem.find('name')
+                            if actor_name is not None and actor_name.text and not video_info["author_name"]:
+                                video_info["author_name"] = actor_name.text
+                            
+                            # 作者头像
+                            actor_thumb = actor_elem.find('thumb')
+                            if actor_thumb is not None and actor_thumb.text and not video_info["author_face"]:
+                                video_info["author_face"] = actor_thumb.text
+                            
+                            # 作者ID/主页
+                            actor_profile = actor_elem.find('profile')
+                            if actor_profile is not None and actor_profile.text and not video_info["author_mid"]:
+                                profile_url = actor_profile.text
+                                # 尝试从URL中提取mid
+                                mid_match = re.search(r"space\.bilibili\.com/(\d+)", profile_url)
+                                if mid_match:
+                                    video_info["author_mid"] = int(mid_match.group(1))
+                        
+                        # 提取BV号
+                        website_elem = nfo_data.find('website')
+                        if website_elem is not None and website_elem.text and not video_info["bvid"]:
+                            bvid_match = re.search(r"video/(BV\w+)", website_elem.text)
+                            if bvid_match:
+                                video_info["bvid"] = bvid_match.group(1)
+                        
+                        # 处理NFO文件中的图片URL
+                        if _process_image_url:
+                            # 使用导入的函数处理图片URL
+                            if video_info["cover"]:
+                                video_info["cover"] = _process_image_url(video_info["cover"], 'covers', use_local_images)
+                            if video_info["author_face"]:
+                                video_info["author_face"] = _process_image_url(video_info["author_face"], 'avatars', use_local_images)
+                        elif hasattr(sys.modules.get('routers.history'), '_process_image_url'):
+                            # 如果导入失败但模块运行时可访问，再次尝试
+                            process_url = getattr(sys.modules.get('routers.history'), '_process_image_url')
+                            if video_info["cover"]:
+                                video_info["cover"] = process_url(video_info["cover"], 'covers', use_local_images)
+                            if video_info["author_face"]:
+                                video_info["author_face"] = process_url(video_info["author_face"], 'avatars', use_local_images)
+                        elif use_local_images:
+                            # 简单的URL处理逻辑，作为后备方案
+                            import hashlib
+                            if video_info["cover"]:
+                                cover_hash = hashlib.md5(video_info["cover"].encode()).hexdigest()
+                                video_info["cover"] = f"http://localhost:8899/images/local/covers/{cover_hash}"
+                            if video_info["author_face"]:
+                                avatar_hash = hashlib.md5(video_info["author_face"].encode()).hexdigest()
+                                video_info["author_face"] = f"http://localhost:8899/images/local/avatars/{avatar_hash}"
+
+                        print(f"【调试】从NFO文件获取到视频信息: {video_info['title']}，封面URL: {video_info['cover'][:50] if video_info['cover'] else 'None'}")
+                    except Exception as e:
+                        print(f"解析NFO文件时出错: {str(e)}")
+                
+                # 如果有CID但没有其他信息，尝试通过API获取
+                if not metadata and not nfo_data and cid and cid.isdigit() and (not video_info["cover"] or not video_info["author_name"] or not video_info["author_face"]):
+                    try:
+                        # 仅当没有元数据和NFO文件时，才尝试通过API或数据库获取
+                        print(f"【调试】没有找到元数据或NFO文件，尝试通过API/数据库获取CID={cid}的视频信息")
+                        
                         # 方式1: 直接调用get_video_by_cid函数（如果已成功导入）
                         if get_video_by_cid:
                             print(f"【调试】使用导入的get_video_by_cid函数获取CID={cid}的视频信息")
@@ -1002,14 +1185,18 @@ async def stream_video(file_path: str):
         ) 
 
 @router.delete("/delete_downloaded_video", summary="删除已下载的视频")
-async def delete_downloaded_video(cid: int, delete_directory: bool = False, directory: Optional[str] = None):
+async def delete_downloaded_video(
+    delete_directory: bool = False, 
+    directory: Optional[str] = None, 
+    cid: Optional[int] = Query(None, description="视频的CID，可选项")
+):
     """
-    删除指定CID的已下载视频文件
+    删除已下载的视频文件
     
     Args:
-        cid: 视频的CID
         delete_directory: 是否删除整个目录，默认为False（只删除视频文件）
         directory: 可选，指定要删除文件的目录路径，如果提供则只在该目录中查找和删除文件
+        cid: 可选，视频的CID
     
     Returns:
         dict: 包含删除结果信息的字典
@@ -1024,6 +1211,13 @@ async def delete_downloaded_video(cid: int, delete_directory: bool = False, dire
                 "status": "error",
                 "message": "下载目录不存在"
             }
+            
+        # 检查参数有效性
+        if not cid and not directory:
+            return {
+                "status": "error",
+                "message": "必须提供cid或directory参数中的至少一个"
+            }
         
         # 查找匹配CID的视频文件和目录
         found_files = []
@@ -1031,21 +1225,36 @@ async def delete_downloaded_video(cid: int, delete_directory: bool = False, dire
         
         # 如果提供了directory参数，并且它确实存在，只在该目录中查找文件
         if directory and os.path.exists(directory):
-            # 检查目录名是否匹配CID
-            if f"_{cid}" in os.path.basename(directory):
-                # 列出该目录中的所有文件
+            # 根据directory直接处理
+            if delete_directory:
+                # 删除整个目录
+                import shutil
+                try:
+                    shutil.rmtree(directory)
+                    return {
+                        "status": "success",
+                        "message": f"已删除目录: {directory}",
+                        "deleted_directory": directory
+                    }
+                except Exception as e:
+                    return {
+                        "status": "error",
+                        "message": f"删除目录时出错: {str(e)}",
+                        "directory": directory
+                    }
+            else:
+                # 查找目录中的视频文件并删除
                 for file in os.listdir(directory):
-                    # 检查文件名是否包含CID
-                    if f"_{cid}" in file:
-                        # 检查是否为视频或音频文件
-                        if file.endswith(('.mp4', '.flv', '.m4a', '.mp3')):
-                            file_path = os.path.join(directory, file)
+                    # 仅查找视频或音频文件
+                    if file.endswith(('.mp4', '.flv', '.m4a', '.mp3')):
+                        file_path = os.path.join(directory, file)
+                        if cid is None or f"_{cid}" in file:  # 如果指定了CID则检查文件名是否包含它
                             found_files.append({
                                 "file_name": file,
                                 "file_path": file_path
                             })
-        else:
-            # 如果没有提供directory参数，执行原来的逻辑
+        elif cid is not None:
+            # 如果没有提供directory参数但提供了cid，执行原来的逻辑
             for root, dirs, files in os.walk(download_dir):
                 # 检查目录名是否包含CID
                 if f"_{cid}" in os.path.basename(root):
@@ -1053,24 +1262,28 @@ async def delete_downloaded_video(cid: int, delete_directory: bool = False, dire
                     if not found_directory:
                         found_directory = root
                     
-                    # 如果没有提供特定目录，或者当前遍历到的目录就是指定目录，则处理
-                    if not directory or root == directory:
-                        # 检查目录中的文件
-                        for file in files:
-                            # 检查文件名是否包含CID
-                            if f"_{cid}" in file:
-                                # 检查是否为视频或音频文件
-                                if file.endswith(('.mp4', '.flv', '.m4a', '.mp3')):
-                                    file_path = os.path.join(root, file)
-                                    found_files.append({
-                                        "file_name": file,
-                                        "file_path": file_path
-                                    })
+                    # 检查目录中的文件
+                    for file in files:
+                        # 检查文件名是否包含CID
+                        if f"_{cid}" in file:
+                            # 检查是否为视频或音频文件
+                            if file.endswith(('.mp4', '.flv', '.m4a', '.mp3')):
+                                file_path = os.path.join(root, file)
+                                found_files.append({
+                                    "file_name": file,
+                                    "file_path": file_path
+                                })
         
         if not found_files and not found_directory:
+            error_message = "未找到匹配的视频文件"
+            if cid is not None:
+                error_message += f"，CID: {cid}"
+            if directory:
+                error_message += f"，目录: {directory}"
+            
             return {
                 "status": "error",
-                "message": f"未找到CID为{cid}的已下载视频" + (f" 在指定目录: {directory}" if directory else "")
+                "message": error_message
             }
         
         # 执行删除操作
@@ -1116,7 +1329,7 @@ async def delete_downloaded_video(cid: int, delete_directory: bool = False, dire
         return {
             "status": "error",
             "message": f"删除视频文件时出错: {str(e)}"
-        } 
+        }
 
 @router.get("/stream_danmaku", summary="获取视频弹幕文件")
 async def stream_danmaku(file_path: Optional[str] = None, cid: Optional[int] = None):
@@ -1224,4 +1437,456 @@ async def stream_danmaku(file_path: Optional[str] = None, cid: Optional[int] = N
         raise HTTPException(
             status_code=500,
             detail=f"获取弹幕文件时出错: {str(e)}"
+        )
+
+@router.post("/download_user_videos", summary="下载用户全部投稿视频")
+async def download_user_videos(request: UserSpaceDownloadRequest):
+    """
+    下载指定用户的全部投稿视频
+    
+    Args:
+        request: 包含用户ID和可选SESSDATA的请求对象
+    """
+    try:
+        # 检查登录状态
+        if config['yutto']['basic']['login_strict']:
+            sessdata = request.sessdata or config.get('SESSDATA')
+            if not sessdata:
+                raise HTTPException(
+                    status_code=401,
+                    detail="未登录：当前设置要求必须登录才能下载视频"
+                )
+            
+            # 验证SESSDATA是否有效
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Cookie': f'SESSDATA={sessdata}'
+            }
+            
+            response = requests.get(
+                'https://api.bilibili.com/x/web-interface/nav',
+                headers=headers,
+                timeout=10
+            )
+            
+            data = response.json()
+            if data.get('code') != 0:
+                raise HTTPException(
+                    status_code=401,
+                    detail="登录已失效：请重新登录"
+                )
+        
+        # 获取 yutto 可执行文件路径
+        if getattr(sys, 'frozen', False):
+            # 如果是打包后的exe运行
+            base_path = os.path.dirname(sys.executable)
+            paths_to_try = [
+                os.path.join(base_path, 'yutto.exe'),  # 尝试主目录
+                os.path.join(base_path, '_internal', 'yutto.exe'),  # 尝试 _internal 目录
+                os.path.join(os.getcwd(), 'yutto.exe'),  # 尝试当前工作目录
+                os.path.join(os.getcwd(), '_internal', 'yutto.exe')  # 尝试当前工作目录的 _internal
+            ]
+            
+            yutto_path = None
+            for path in paths_to_try:
+                print(f"尝试路径: {path}")
+                if os.path.exists(path):
+                    yutto_path = path
+                    print(f"找到 yutto.exe: {path}")
+                    break
+            
+            if yutto_path is None:
+                raise FileNotFoundError(f"找不到 yutto.exe，已尝试的路径: {', '.join(paths_to_try)}")
+        else:
+            # 如果是直接运行python脚本
+            yutto_path = 'yutto'
+            print(f"使用命令: {yutto_path}")
+
+        if not os.path.exists(yutto_path) and getattr(sys, 'frozen', False):
+            raise FileNotFoundError(f"找不到 yutto.exe，已尝试的路径: {yutto_path}")
+
+        # 构建命令
+        # 确保下载目录和临时目录存在且有正确的权限
+        download_dir = os.path.normpath(config['yutto']['basic']['dir'])
+        tmp_dir = os.path.normpath(config['yutto']['basic']['tmp_dir'])
+        
+        # 创建目录（如果不存在）
+        os.makedirs(download_dir, exist_ok=True)
+        os.makedirs(tmp_dir, exist_ok=True)
+        
+        # 检查目录权限
+        if not os.access(download_dir, os.W_OK):
+            raise HTTPException(
+                status_code=500,
+                detail=f"没有下载目录的写入权限: {download_dir}"
+            )
+        if not os.access(tmp_dir, os.W_OK):
+            raise HTTPException(
+                status_code=500,
+                detail=f"没有临时目录的写入权限: {tmp_dir}"
+            )
+        
+        # 构建用户空间URL
+        user_space_url = f"https://space.bilibili.com/{request.user_id}/video"
+        
+        command = [
+            yutto_path,
+            user_space_url,
+            '--batch',  # 批量下载
+            '--dir', download_dir,
+            '--tmp-dir', tmp_dir,
+            '--subpath-template', f'{{username}}的全部投稿视频/{{title}}_{{download_date@%Y%m%d_%H%M%S}}/{{title}}',
+            '--with-metadata'  # 添加元数据文件保存
+        ]
+        
+        # 根据用户选择决定是否下载封面
+        if not request.download_cover:
+            command.append('--no-cover')
+        
+        # 根据用户选择决定是否仅下载音频
+        if request.only_audio:
+            command.append('--audio-only')
+        
+        # 添加其他 yutto 配置
+        if not config['yutto']['resource']['require_subtitle']:
+            command.append('--no-subtitle')
+        
+        if config['yutto']['danmaku']['font_size']:
+            command.extend(['--danmaku-font-size', str(config['yutto']['danmaku']['font_size'])])
+        
+        if config['yutto']['batch']['with_section']:
+            command.append('--with-section')
+        
+        # 如果提供了SESSDATA，添加到命令中
+        if request.sessdata:
+            command.extend(['--sessdata', request.sessdata])
+        elif config.get('SESSDATA'):
+            command.extend(['--sessdata', config['SESSDATA']])
+
+        # 设置环境变量
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONUTF8'] = '1'
+        env['PYTHONUNBUFFERED'] = '1'  # 确保Python输出不被缓存
+        
+        # 在Linux上确保PATH包含python环境
+        if sys.platform != 'win32':
+            env['PATH'] = f"{os.path.dirname(sys.executable)}:{env.get('PATH', '')}"
+            # 添加virtualenv的site-packages路径（如果存在）
+            site_packages = os.path.join(os.path.dirname(os.path.dirname(sys.executable)), 'lib', 'python*/site-packages')
+            env['PYTHONPATH'] = f"{site_packages}:{env.get('PYTHONPATH', '')}"
+
+        # 准备进程参数
+        popen_kwargs = {
+            'stdout': subprocess.PIPE,
+            'stderr': subprocess.PIPE,
+            'encoding': 'utf-8',
+            'errors': 'replace',
+            'universal_newlines': True,
+            'env': env,
+            'bufsize': 1,  # 行缓冲
+            'shell': sys.platform != 'win32'  # 在非Windows系统上使用shell
+        }
+        
+        # 在Windows系统上添加CREATE_NO_WINDOW标志
+        if sys.platform == 'win32':
+            popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            popen_kwargs['shell'] = False  # Windows上不使用shell
+
+        # 在Linux上将命令列表转换为字符串，同时处理特殊字符
+        command_str = None
+        if sys.platform != 'win32':
+            command_str = ' '.join(f"'{arg}'" if ((' ' in arg) or ("'" in arg) or ('"' in arg)) else arg for arg in command)
+        
+        # 执行命令
+        print(f"执行下载命令: {' '.join(command) if sys.platform == 'win32' else command_str}")
+        
+        if sys.platform == 'win32':
+            process = subprocess.Popen(command, **popen_kwargs)
+        else:
+            process = subprocess.Popen(command_str, **popen_kwargs)
+
+        # 创建一个响应流
+        return StreamingResponse(
+            stream_process_output(process),
+            media_type="text/event-stream"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"下载过程出错: {str(e)}")
+
+@router.post("/download_favorites", summary="下载用户收藏夹视频")
+async def download_favorites(request: FavoriteDownloadRequest):
+    """
+    下载用户的收藏夹视频
+    
+    Args:
+        request: 包含用户ID、收藏夹ID和可选SESSDATA的请求对象
+        注意：不提供收藏夹ID时，将下载所有收藏夹
+    """
+    try:
+        # 检查登录状态
+        sessdata = request.sessdata or config.get('SESSDATA')
+        if not sessdata:
+            raise HTTPException(
+                status_code=401,
+                detail="未登录：下载收藏夹必须提供SESSDATA"
+            )
+        
+        # 验证SESSDATA是否有效
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Cookie': f'SESSDATA={sessdata}'
+        }
+        
+        response = requests.get(
+            'https://api.bilibili.com/x/web-interface/nav',
+            headers=headers,
+            timeout=10
+        )
+        
+        data = response.json()
+        if data.get('code') != 0:
+            raise HTTPException(
+                status_code=401,
+                detail="登录已失效：请重新登录"
+            )
+        
+        # 获取 yutto 可执行文件路径
+        if getattr(sys, 'frozen', False):
+            # 如果是打包后的exe运行
+            base_path = os.path.dirname(sys.executable)
+            paths_to_try = [
+                os.path.join(base_path, 'yutto.exe'),  # 尝试主目录
+                os.path.join(base_path, '_internal', 'yutto.exe'),  # 尝试 _internal 目录
+                os.path.join(os.getcwd(), 'yutto.exe'),  # 尝试当前工作目录
+                os.path.join(os.getcwd(), '_internal', 'yutto.exe')  # 尝试当前工作目录的 _internal
+            ]
+            
+            yutto_path = None
+            for path in paths_to_try:
+                print(f"尝试路径: {path}")
+                if os.path.exists(path):
+                    yutto_path = path
+                    print(f"找到 yutto.exe: {path}")
+                    break
+            
+            if yutto_path is None:
+                raise FileNotFoundError(f"找不到 yutto.exe，已尝试的路径: {', '.join(paths_to_try)}")
+        else:
+            # 如果是直接运行python脚本
+            yutto_path = 'yutto'
+            print(f"使用命令: {yutto_path}")
+
+        if not os.path.exists(yutto_path) and getattr(sys, 'frozen', False):
+            raise FileNotFoundError(f"找不到 yutto.exe，已尝试的路径: {yutto_path}")
+
+        # 构建命令
+        # 确保下载目录和临时目录存在且有正确的权限
+        download_dir = os.path.normpath(config['yutto']['basic']['dir'])
+        tmp_dir = os.path.normpath(config['yutto']['basic']['tmp_dir'])
+        
+        # 创建目录（如果不存在）
+        os.makedirs(download_dir, exist_ok=True)
+        os.makedirs(tmp_dir, exist_ok=True)
+        
+        # 检查目录权限
+        if not os.access(download_dir, os.W_OK):
+            raise HTTPException(
+                status_code=500,
+                detail=f"没有下载目录的写入权限: {download_dir}"
+            )
+        if not os.access(tmp_dir, os.W_OK):
+            raise HTTPException(
+                status_code=500,
+                detail=f"没有临时目录的写入权限: {tmp_dir}"
+            )
+        
+        # 构建收藏夹URL
+        if request.fid:
+            # 指定收藏夹
+            favorite_url = f"https://space.bilibili.com/{request.user_id}/favlist?fid={request.fid}"
+        else:
+            # 所有收藏夹
+            favorite_url = f"https://space.bilibili.com/{request.user_id}/favlist"
+        
+        command = [
+            yutto_path,
+            favorite_url,
+            '--batch',  # 批量下载
+            '--dir', download_dir,
+            '--tmp-dir', tmp_dir,
+            '--subpath-template', f'{{username}}的收藏夹/{{title}}_{{download_date@%Y%m%d_%H%M%S}}/{{title}}',
+            '--with-metadata'  # 添加元数据文件保存
+        ]
+        
+        # 根据用户选择决定是否下载封面
+        if not request.download_cover:
+            command.append('--no-cover')
+        
+        # 根据用户选择决定是否仅下载音频
+        if request.only_audio:
+            command.append('--audio-only')
+        
+        # 添加其他 yutto 配置
+        if not config['yutto']['resource']['require_subtitle']:
+            command.append('--no-subtitle')
+        
+        if config['yutto']['danmaku']['font_size']:
+            command.extend(['--danmaku-font-size', str(config['yutto']['danmaku']['font_size'])])
+        
+        if config['yutto']['batch']['with_section']:
+            command.append('--with-section')
+        
+        # 添加SESSDATA
+        command.extend(['--sessdata', sessdata])
+
+        # 设置环境变量
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONUTF8'] = '1'
+        env['PYTHONUNBUFFERED'] = '1'  # 确保Python输出不被缓存
+        
+        # 在Linux上确保PATH包含python环境
+        if sys.platform != 'win32':
+            env['PATH'] = f"{os.path.dirname(sys.executable)}:{env.get('PATH', '')}"
+            # 添加virtualenv的site-packages路径（如果存在）
+            site_packages = os.path.join(os.path.dirname(os.path.dirname(sys.executable)), 'lib', 'python*/site-packages')
+            env['PYTHONPATH'] = f"{site_packages}:{env.get('PYTHONPATH', '')}"
+
+        # 准备进程参数
+        popen_kwargs = {
+            'stdout': subprocess.PIPE,
+            'stderr': subprocess.PIPE,
+            'encoding': 'utf-8',
+            'errors': 'replace',
+            'universal_newlines': True,
+            'env': env,
+            'bufsize': 1,  # 行缓冲
+            'shell': sys.platform != 'win32'  # 在非Windows系统上使用shell
+        }
+        
+        # 在Windows系统上添加CREATE_NO_WINDOW标志
+        if sys.platform == 'win32':
+            popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            popen_kwargs['shell'] = False  # Windows上不使用shell
+
+        # 在Linux上将命令列表转换为字符串，同时处理特殊字符
+        command_str = None
+        if sys.platform != 'win32':
+            command_str = ' '.join(f"'{arg}'" if ((' ' in arg) or ("'" in arg) or ('"' in arg)) else arg for arg in command)
+        
+        # 执行命令
+        print(f"执行下载命令: {' '.join(command) if sys.platform == 'win32' else command_str}")
+        
+        if sys.platform == 'win32':
+            process = subprocess.Popen(command, **popen_kwargs)
+        else:
+            process = subprocess.Popen(command_str, **popen_kwargs)
+
+        # 创建一个响应流
+        return StreamingResponse(
+            stream_process_output(process),
+            media_type="text/event-stream"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"下载过程出错: {str(e)}")
+
+# 定义响应模型
+class VideoInfo(BaseModel):
+    path: str
+    size: int
+    title: str
+    create_time: datetime
+    cover: str = ""
+    cid: str = ""
+    bvid: str = ""
+    author_name: str = ""
+    author_face: str = ""
+    author_mid: int = 0
+
+class VideoSearchResponse(BaseModel):
+    total: int
+    videos: list[VideoInfo]
+
+# 视频详细信息响应模型
+class VideoDetailResponse(BaseModel):
+    status: str
+    message: str
+    data: Optional[dict] = None
+    
+@router.get("/video_info", summary="获取B站视频详细信息")
+async def get_video_info(aid: Optional[int] = None, bvid: Optional[str] = None, sessdata: Optional[str] = None):
+    """
+    获取B站视频的详细信息
+    
+    Args:
+        aid: 可选，视频的avid
+        bvid: 可选，视频的bvid
+        sessdata: 可选，用户的SESSDATA，用于获取限制观看的视频
+    
+    Returns:
+        视频详细信息
+    """
+    try:
+        # 检查参数是否有效
+        if not aid and not bvid:
+            return VideoDetailResponse(
+                status="error",
+                message="必须提供aid或bvid参数中的至少一个"
+            )
+            
+        # 设置请求头
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # 如果提供了SESSDATA，添加到请求头中
+        if sessdata:
+            headers['Cookie'] = f'SESSDATA={sessdata}'
+        elif config.get('SESSDATA'):
+            headers['Cookie'] = f'SESSDATA={config["SESSDATA"]}'
+            
+        # 构建请求参数
+        params = {}
+        if aid:
+            params['aid'] = aid
+        if bvid:
+            params['bvid'] = bvid
+            
+        # 发送请求获取视频信息
+        response = requests.get(
+            'https://api.bilibili.com/x/web-interface/view',
+            params=params,
+            headers=headers,
+            timeout=10
+        )
+        
+        # 解析响应
+        response_json = response.json()
+        
+        # 处理可能的错误
+        if response_json.get('code') != 0:
+            return VideoDetailResponse(
+                status="error",
+                message=f"获取视频信息失败: {response_json.get('message', '未知错误')}",
+                data=response_json
+            )
+            
+        # 返回成功响应
+        return VideoDetailResponse(
+            status="success",
+            message="获取视频信息成功",
+            data=response_json.get('data')
+        )
+            
+    except Exception as e:
+        return VideoDetailResponse(
+            status="error",
+            message=f"获取视频信息时出错: {str(e)}"
         )

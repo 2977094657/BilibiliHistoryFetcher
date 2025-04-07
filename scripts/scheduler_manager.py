@@ -1,19 +1,18 @@
 import asyncio
+import calendar
 import logging
 import os
-import sys
 import threading
-import calendar
+import traceback
 from datetime import datetime, timedelta
 from typing import Optional, List
-import traceback
 
 import httpx
 import schedule
 import yaml
 
 from scripts.scheduler_db_enhanced import EnhancedSchedulerDB  # 修改为导入增强版数据库
-from scripts.utils import get_base_path, load_config
+from scripts.utils import get_base_path, load_config, get_config_path
 
 # 配置日志记录
 logger = logging.getLogger(__name__)
@@ -806,30 +805,10 @@ class SchedulerManager:
             return False
         
     def _save_config_to_file(self):
-        """保存当前配置到文件"""
+        """保存配置到文件"""
         try:
-            # 使用与加载相同的路径逻辑
-            base_path = get_base_path()
-            if getattr(sys, 'frozen', False):
-                config_path = os.path.join(base_path, 'config', 'scheduler_config.yaml')
-            else:
-                config_path = os.path.join('config', 'scheduler_config.yaml')
-                
-            # 如果配置文件不存在，尝试其他可能的位置
-            if not os.path.exists(config_path):
-                alternative_paths = [
-                    os.path.join(os.path.dirname(sys.executable), 'config', 'scheduler_config.yaml'),
-                    os.path.join(os.getcwd(), 'config', 'scheduler_config.yaml'),
-                    os.path.join(base_path, '_internal', 'config', 'scheduler_config.yaml'),
-                    os.path.join(os.path.dirname(base_path), 'config', 'scheduler_config.yaml')
-                ]
-                for alt_path in alternative_paths:
-                    if os.path.exists(alt_path):
-                        config_path = alt_path
-                        break
-            
-            if not os.path.exists(config_path):
-                raise FileNotFoundError(f"找不到配置文件: {config_path}")
+            # 使用utils中的公共函数获取配置文件路径
+            config_path = get_config_path('scheduler_config.yaml')
                 
             # 先读取现有配置，以保留其他设置
             with open(config_path, 'r', encoding='utf-8') as f:

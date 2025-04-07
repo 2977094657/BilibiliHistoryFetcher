@@ -26,8 +26,21 @@ async def start_download(
     Args:
         year: 指定年份，不指定则下载所有年份
     """
-    # 在后台任务中执行下载
-    background_tasks.add_task(downloader.start_download, year)
+    # 包装下载函数和状态更新
+    def download_with_status_update(year=None):
+        try:
+            # 执行下载
+            downloader.start_download(year)
+        except Exception as e:
+            print(f"下载过程发生错误: {str(e)}")
+        finally:
+            # 确保无论下载成功还是失败，状态都会被设置为已完成
+            print("\n=== 下载任务完成，更新状态 ===")
+            downloader.is_downloading = False
+            print("下载状态已设置为已完成")
+    
+    # 在后台任务中执行包装函数
+    background_tasks.add_task(download_with_status_update, year)
     
     return {
         "status": "success",
