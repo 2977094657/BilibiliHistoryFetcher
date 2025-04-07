@@ -39,8 +39,8 @@
    1. 如果你使用 NVIDIA 显卡，并配置好了 Docker 驱动，请使用`docker build -t bilibili-api:dev -f docker/Dockerfile.cuda .`构建镜像。
    2. 否则，请使用`docker build -t bilibili-api:dev -f docker/Dockerfile.cpu .`构建镜像。
 3. 根据你使用的镜像创建 Docker 容器：
-   1. 如果你是用`cuda`镜像，则使用`docker run -d -v ./config:/app/config -p 8899:8899 --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --name bilibili-api bilibili-api:dev`创建容器。
-   1. 否则，请使用`docker run -d -v ./config:/app/config -p 8899:8899 --name bilibili-api bilibili-api:dev`创建容器。
+   1. 如果你是用`cuda`镜像，则使用`docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --name bilibili-api bilibili-api:dev`创建容器。
+   1. 否则，请使用`docker run -d -v ./config:/app/config ./output:/app/output -p 8899:8899 --name bilibili-api bilibili-api:dev`创建容器。
 
 ### 使用`uv`安装
 
