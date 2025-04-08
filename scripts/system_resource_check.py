@@ -1,4 +1,3 @@
-import os
 import platform
 import psutil
 import logging
@@ -115,29 +114,3 @@ def check_system_resources():
                 "resource_limitation": "检查资源时出错"
             }
         }
-
-def can_import_torch():
-    """
-    检查是否可以导入torch模块
-    
-    返回:
-        bool: 如果可以导入torch则返回True，否则返回False
-    """
-    try:
-        # 检查系统资源
-        resources = check_system_resources()
-        
-        # 如果是Linux系统且资源不足，则不导入torch
-        if resources["os_info"]["is_linux"] and not resources["summary"]["can_run_speech_to_text"]:
-            logger.warning(f"系统资源不足，不导入torch模块。限制原因: {resources.get('summary', {}).get('resource_limitation', '未知')}")
-            return False
-        
-        # 尝试导入torch
-        import torch
-        return True
-    except ImportError:
-        logger.warning("无法导入torch模块")
-        return False
-    except Exception as e:
-        logger.error(f"检查torch导入时出错: {str(e)}")
-        return False
