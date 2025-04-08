@@ -302,12 +302,13 @@ async def download_model(model_size: str):
         # 注意：这里会阻塞直到下载完成
         logger.info(f"开始下载模型: {model_size}")
         start_time = time.time()
+        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
         
         # 使用线程执行器来避免阻塞
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
             None,
-            lambda: WhisperModel(model_size, device="cpu", compute_type="int8")
+            lambda: os.system(f"huggingface-cli download --resume-download csukuangfj/sherpa-onnx-whisper-{model_size}")
         )
         
         download_time = time.time() - start_time
