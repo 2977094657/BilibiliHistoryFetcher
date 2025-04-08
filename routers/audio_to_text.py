@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from scripts.utils import load_config
 from .wisper import WhisperModel
+from huggingface_hub import snapshot_download
 
 # 设置日志格式
 logging.basicConfig(level=logging.INFO)
@@ -187,33 +188,6 @@ async def load_model(model_size, device=None, compute_type=None):
         model_loading = False
         logger.info("模型加载状态已重置")
 
-def is_model_downloaded(model_name: str) -> Tuple[bool, Optional[str]]:
-    """检查模型是否已下载
-    
-    Args:
-        model_name: 模型名称
-        
-    Returns:
-        (是否已下载, 模型路径)
-    """
-    # 首先检查操作系统类型，决定缓存目录的位置
-    if os.name == 'nt':  # Windows
-        cache_dir = os.path.join(os.environ.get('USERPROFILE', ''), '.cache', 'huggingface', 'hub')
-    else:  # macOS / Linux
-        cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'huggingface', 'hub')
-        
-    # 可能的模型提供者列表
-    providers = ["csukuangfj"]
-    
-    # 检查每个可能的提供者路径
-    for provider in providers:
-        model_id = f"{provider}/sherpa-onnx-whisper-{model_name}"
-        model_dir = os.path.join(cache_dir, 'models--' + model_id.replace('/', '--'))
-        if os.path.exists(model_dir) and os.path.exists(os.path.join(model_dir, 'snapshots')):
-            return True, model_dir
-            
-    return False, None
-
 @router.delete("/models", summary="删除指定的Whisper模型")
 async def delete_model(request: DeleteModelRequest):
     """
@@ -289,39 +263,23 @@ async def download_model(model_size: str):
         model_size: 模型大小，可选值: tiny, base, small, medium, large-v1, large-v2, large-v3
     """
     try:
-        # 检查模型是否已下载
-        is_downloaded, model_path = is_model_downloaded(model_size)
-        if is_downloaded:
-            return {
-                "status": "already_downloaded",
-                "message": f"模型 {model_size} 已下载",
-                "model_path": model_path
-            }
-        
         # 创建临时的WhisperModel实例来触发下载
         # 注意：这里会阻塞直到下载完成
         logger.info(f"开始下载模型: {model_size}")
         start_time = time.time()
-        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
         
         # 使用线程执行器来避免阻塞
+        # doc: https://huggingface.co/docs/huggingface_hub/main/en/guides/download
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
+        model_path = await loop.run_in_executor(
             None,
-            lambda: os.system(f"huggingface-cli download --resume-download csukuangfj/sherpa-onnx-whisper-{model_size}")
+            lambda: snapshot_download(repo_id=f"csukuangfj/sherpa-onnx-whisper-{model_size}",
+                                      endpoint="https://hf-mirror.com")
         )
         
         download_time = time.time() - start_time
         logger.info(f"模型下载完成，耗时: {download_time:.2f} 秒")
         
-        # 再次检查模型是否已下载
-        is_downloaded, model_path = is_model_downloaded(model_size)
-        if not is_downloaded:
-            raise HTTPException(
-                status_code=500,
-                detail="模型下载似乎完成但未找到模型文件"
-            )
-            
         return {
             "status": "success",
             "message": f"模型 {model_size} 下载完成",
