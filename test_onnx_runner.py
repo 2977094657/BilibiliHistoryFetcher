@@ -14,13 +14,13 @@
 
 # req: numpy, soundfile, kaldi_native_fbank, onnxruntime
 # optional: librosa
-# pip install numpy onnxruntime-gpu soundfile kaldi_native_fbank librosa
+# pip install numpy soundfile kaldi_native_fbank librosa onnxruntime-directml
 
 # test command: python test_onnx_runner.py --encoder sherpa-onnx-whisper-base\base-encoder.onnx --decoder sherpa-onnx-whisper-base\base-decoder.onnx --tokens sherpa-onnx-whisper-base\base-tokens.txt --language zh --task transcribe test.wav 
 
 # package: pyinstaller
 # pip install pyinstaller
-# pyinstaller test_onnx_runner.py
+# pyinstaller test_onnx_runner.py --hidden-import=numpy.core.multiarray --noconfirm
 # ./test_onnx_runner.exe --encoder sherpa-onnx-whisper-base\base-encoder.onnx --decoder sherpa-onnx-whisper-base\base-decoder.onnx --tokens sherpa-onnx-whisper-base\base-tokens.txt --language zh --task transcribe test.wav 
 
 # package: nuitka
@@ -38,6 +38,8 @@ import onnxruntime as ort #FIXME: 打包时导致torch引入
 import soundfile as sf
 import librosa
 from tqdm import tqdm
+
+print("init onnxruntime: ",ort.get_available_providers())
 
 def get_args():
     parser = argparse.ArgumentParser()
