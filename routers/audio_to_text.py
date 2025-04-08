@@ -9,12 +9,12 @@ import asyncio
 import signal
 import logging
 import traceback
-import platform
 from typing import Optional, List, Dict, Tuple, Any
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from scripts.utils import load_config
+from .wisper import WhisperModel
 
 # 设置日志格式
 logging.basicConfig(level=logging.INFO)
@@ -29,35 +29,6 @@ whisper_model = None
 model_loading = False
 model_lock = asyncio.Lock()
 
-# 检查是否是Linux系统
-is_linux = platform.system().lower() == "linux"
-
-# 条件导入torch和faster_whisper
-torch_available = False
-whisper_available = False
-
-try:
-    # 如果是Linux系统，先检查系统资源
-    if is_linux:
-        from scripts.system_resource_check import can_import_torch
-        torch_available = can_import_torch()
-        if torch_available:
-            import torch
-            from faster_whisper import WhisperModel
-            whisper_available = True
-        else:
-            logger.warning("Linux系统资源不足，不导入torch和WhisperModel模块")
-    else:
-        # 非Linux系统，直接导入
-        import torch
-        from faster_whisper import WhisperModel
-        torch_available = True
-        whisper_available = True
-except ImportError as e:
-    logger.warning(f"导入torch或WhisperModel失败: {str(e)}")
-except Exception as e:
-    logger.error(f"导入模块时出错: {str(e)}")
-
 # 添加信号处理
 def handle_interrupt(signum, frame):
     """处理中断信号"""
@@ -67,8 +38,6 @@ def handle_interrupt(signum, frame):
         if whisper_model is not None:
             del whisper_model
             whisper_model = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
         print("资源已清理")
     except Exception as e:
         print(f"清理资源时出错: {str(e)}")
@@ -101,8 +70,6 @@ class SystemInfo(BaseModel):
     cuda_version: Optional[str] = Field(None, description="CUDA版本")
     gpu_info: Optional[List[Dict[str, str]]] = Field(None, description="GPU信息")
     cuda_setup_guide: Optional[str] = Field(None, description="CUDA安装指南")
-    torch_available: bool = Field(False, description="是否可以导入torch")
-    whisper_available: bool = Field(False, description="是否可以导入WhisperModel")
     resource_limitation: Optional[str] = Field(None, description="资源限制原因")
 
 class ModelInfo(BaseModel):
@@ -137,21 +104,15 @@ class ResourceCheckResponse(BaseModel):
     can_run_speech_to_text: bool = Field(..., description="是否可以运行语音转文字功能")
     limitation_reason: Optional[str] = Field(None, description="限制原因")
 
+class DeleteModelRequest(BaseModel):
+    model_size: str = Field(..., description="要删除的模型大小，可选值: tiny, base, small, medium, large-v1, large-v2, large-v3")
+
+# TODO:模型的的管理,包括下载/删除/载入/弹出/推理,注意并发冲突
+
 async def load_model(model_size, device=None, compute_type=None):
     """加载Whisper模型"""
     global whisper_model, model_loading
-    
-    # 检查是否可以使用WhisperModel
-    if not whisper_available:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "WHISPER_NOT_AVAILABLE",
-                "message": "语音转文字功能不可用，系统资源不足或未安装相关依赖",
-                "suggestion": "请检查系统资源或安装相关依赖"
-            }
-        )
-    
+        
     try:
         # 检查是否已加载相同型号的模型
         if whisper_model is not None and whisper_model.model_size == model_size:
@@ -225,6 +186,155 @@ async def load_model(model_size, device=None, compute_type=None):
     finally:
         model_loading = False
         logger.info("模型加载状态已重置")
+
+def is_model_downloaded(model_name: str) -> Tuple[bool, Optional[str]]:
+    """检查模型是否已下载
+    
+    Args:
+        model_name: 模型名称
+        
+    Returns:
+        (是否已下载, 模型路径)
+    """
+    # 首先检查操作系统类型，决定缓存目录的位置
+    if os.name == 'nt':  # Windows
+        cache_dir = os.path.join(os.environ.get('USERPROFILE', ''), '.cache', 'huggingface', 'hub')
+    else:  # macOS / Linux
+        cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'huggingface', 'hub')
+        
+    # 可能的模型提供者列表
+    providers = ["csukuangfj"]
+    
+    # 检查每个可能的提供者路径
+    for provider in providers:
+        model_id = f"{provider}/sherpa-onnx-whisper-{model_name}"
+        model_dir = os.path.join(cache_dir, 'models--' + model_id.replace('/', '--'))
+        if os.path.exists(model_dir) and os.path.exists(os.path.join(model_dir, 'snapshots')):
+            return True, model_dir
+            
+    return False, None
+
+@router.delete("/models", summary="删除指定的Whisper模型")
+async def delete_model(request: DeleteModelRequest):
+    """
+    删除指定的Whisper模型
+    
+    Args:
+        request: 包含要删除的模型大小
+        
+    Returns:
+        dict: 包含删除操作结果的信息
+    """
+    try:
+
+        # 检查模型是否已下载
+        is_downloaded, model_path = is_model_downloaded(request.model_size)
+        if not is_downloaded:
+            return {
+                "success": False,
+                "message": f"模型 {request.model_size} 未下载，无需删除",
+                "model_size": request.model_size
+            }
+        
+        # 如果模型正在使用中，不允许删除
+        global whisper_model
+        if whisper_model is not None and whisper_model.model_size == request.model_size:
+            return {
+                "success": False,
+                "message": f"模型 {request.model_size} 当前正在使用中，无法删除。请先关闭使用该模型的任务后再尝试删除。",
+                "model_size": request.model_size
+            }
+        
+        # 删除模型文件
+        import shutil
+        try:
+            if model_path and os.path.exists(model_path):
+                shutil.rmtree(model_path)
+                logger.info(f"已成功删除模型: {request.model_size}，路径: {model_path}")
+                return {
+                    "success": True,
+                    "message": f"已成功删除模型: {request.model_size}",
+                    "model_size": request.model_size,
+                    "model_path": model_path
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": f"模型路径不存在: {model_path}",
+                    "model_size": request.model_size
+                }
+        except Exception as e:
+            logger.error(f"删除模型文件时出错: {str(e)}")
+            return {
+                "success": False,
+                "message": f"删除模型文件时出错: {str(e)}",
+                "model_size": request.model_size,
+                "model_path": model_path
+            }
+            
+    except Exception as e:
+        logger.error(f"删除模型时出错: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"删除模型时出错: {str(e)}"
+        )
+
+@router.post("/download_model", summary="下载指定的Whisper模型")
+async def download_model(model_size: str):
+    """
+    下载指定的Whisper模型
+    
+    Args:
+        model_size: 模型大小，可选值: tiny, base, small, medium, large-v1, large-v2, large-v3
+    """
+    try:
+        # 检查模型是否已下载
+        is_downloaded, model_path = is_model_downloaded(model_size)
+        if is_downloaded:
+            return {
+                "status": "already_downloaded",
+                "message": f"模型 {model_size} 已下载",
+                "model_path": model_path
+            }
+        
+        # 创建临时的WhisperModel实例来触发下载
+        # 注意：这里会阻塞直到下载完成
+        logger.info(f"开始下载模型: {model_size}")
+        start_time = time.time()
+        
+        # 使用线程执行器来避免阻塞
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: WhisperModel(model_size, device="cpu", compute_type="int8")
+        )
+        
+        download_time = time.time() - start_time
+        logger.info(f"模型下载完成，耗时: {download_time:.2f} 秒")
+        
+        # 再次检查模型是否已下载
+        is_downloaded, model_path = is_model_downloaded(model_size)
+        if not is_downloaded:
+            raise HTTPException(
+                status_code=500,
+                detail="模型下载似乎完成但未找到模型文件"
+            )
+            
+        return {
+            "status": "success",
+            "message": f"模型 {model_size} 下载完成",
+            "model_path": model_path,
+            "download_time": f"{download_time:.2f}秒"
+        }
+        
+    except Exception as e:
+        logger.error(f"模型下载失败: {str(e)}")
+        logger.error(f"错误堆栈: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"模型下载失败: {str(e)}"
+        ) 
 
 def format_timestamp(seconds):
     """将秒转换为完整的时间戳格式 HH:MM:SS"""
@@ -603,27 +713,6 @@ async def check_environment():
         gpu_info = None
         resource_limitation = None
         
-        # 如果torch可用，检查CUDA支持
-        if torch_available:
-            cuda_available = torch.cuda.is_available()
-            if cuda_available:
-                cuda_version = torch.version.cuda
-                gpu_info = []
-                for i in range(torch.cuda.device_count()):
-                    gpu_info.append({
-                        "name": torch.cuda.get_device_name(i),
-                        "memory": f"{torch.cuda.get_device_properties(i).total_memory / 1024**3:.1f}GB"
-                    })
-        
-        # 如果是Linux系统且torch不可用，获取资源限制原因
-        if is_linux and not torch_available:
-            try:
-                from scripts.system_resource_check import check_system_resources
-                resources = check_system_resources()
-                resource_limitation = resources.get('summary', {}).get('resource_limitation', '系统资源不足')
-            except Exception as e:
-                resource_limitation = f"检查系统资源时出错: {str(e)}"
-        
         # 生成CUDA安装指南
         cuda_setup_guide = None if cuda_available else get_cuda_setup_guide(os_name)
         
@@ -636,8 +725,6 @@ async def check_environment():
             cuda_version=cuda_version,
             gpu_info=gpu_info,
             cuda_setup_guide=cuda_setup_guide,
-            torch_available=torch_available,
-            whisper_available=whisper_available,
             resource_limitation=resource_limitation
         )
         
@@ -657,62 +744,6 @@ async def check_environment():
             status_code=500,
             detail=f"环境检查失败: {str(e)}"
         )
-
-@router.post("/download_model", summary="下载指定的Whisper模型")
-async def download_model(model_size: str):
-    """
-    下载指定的Whisper模型
-    
-    Args:
-        model_size: 模型大小，可选值: tiny, base, small, medium, large-v1, large-v2, large-v3
-    """
-    try:
-        # 检查模型是否已下载
-        is_downloaded, model_path = is_model_downloaded(model_size)
-        if is_downloaded:
-            return {
-                "status": "already_downloaded",
-                "message": f"模型 {model_size} 已下载",
-                "model_path": model_path
-            }
-        
-        # 创建临时的WhisperModel实例来触发下载
-        # 注意：这里会阻塞直到下载完成
-        logger.info(f"开始下载模型: {model_size}")
-        start_time = time.time()
-        
-        # 使用线程执行器来避免阻塞
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: WhisperModel(model_size, device="cpu", compute_type="int8")
-        )
-        
-        download_time = time.time() - start_time
-        logger.info(f"模型下载完成，耗时: {download_time:.2f} 秒")
-        
-        # 再次检查模型是否已下载
-        is_downloaded, model_path = is_model_downloaded(model_size)
-        if not is_downloaded:
-            raise HTTPException(
-                status_code=500,
-                detail="模型下载似乎完成但未找到模型文件"
-            )
-            
-        return {
-            "status": "success",
-            "message": f"模型 {model_size} 下载完成",
-            "model_path": model_path,
-            "download_time": f"{download_time:.2f}秒"
-        }
-        
-    except Exception as e:
-        logger.error(f"模型下载失败: {str(e)}")
-        logger.error(f"错误堆栈: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"模型下载失败: {str(e)}"
-        ) 
 
 @router.get("/resource_check", response_model=ResourceCheckResponse)
 async def check_system_resources_api():
@@ -758,86 +789,6 @@ async def check_system_resources_api():
             status_code=500,
             detail=f"检查系统资源时出错: {str(e)}"
         )
-
-class DeleteModelRequest(BaseModel):
-    model_size: str = Field(..., description="要删除的模型大小，可选值: tiny, base, small, medium, large-v1, large-v2, large-v3")
-
-@router.delete("/models", summary="删除指定的Whisper模型")
-async def delete_model(request: DeleteModelRequest):
-    """
-    删除指定的Whisper模型
-    
-    Args:
-        request: 包含要删除的模型大小
-        
-    Returns:
-        dict: 包含删除操作结果的信息
-    """
-    try:
-        # 检查系统资源是否足够运行语音转文字功能
-        if not whisper_available:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "WHISPER_NOT_AVAILABLE",
-                    "message": "语音转文字功能不可用，系统资源不足或未安装相关依赖",
-                    "suggestion": "请检查系统资源或安装相关依赖"
-                }
-            )
-        
-        # 检查模型是否已下载
-        is_downloaded, model_path = is_model_downloaded(request.model_size)
-        if not is_downloaded:
-            return {
-                "success": False,
-                "message": f"模型 {request.model_size} 未下载，无需删除",
-                "model_size": request.model_size
-            }
-        
-        # 如果模型正在使用中，不允许删除
-        global whisper_model
-        if whisper_model is not None and whisper_model.model_size == request.model_size:
-            return {
-                "success": False,
-                "message": f"模型 {request.model_size} 当前正在使用中，无法删除。请先关闭使用该模型的任务后再尝试删除。",
-                "model_size": request.model_size
-            }
-        
-        # 删除模型文件
-        import shutil
-        try:
-            if model_path and os.path.exists(model_path):
-                shutil.rmtree(model_path)
-                logger.info(f"已成功删除模型: {request.model_size}，路径: {model_path}")
-                return {
-                    "success": True,
-                    "message": f"已成功删除模型: {request.model_size}",
-                    "model_size": request.model_size,
-                    "model_path": model_path
-                }
-            else:
-                return {
-                    "success": False,
-                    "message": f"模型路径不存在: {model_path}",
-                    "model_size": request.model_size
-                }
-        except Exception as e:
-            logger.error(f"删除模型文件时出错: {str(e)}")
-            return {
-                "success": False,
-                "message": f"删除模型文件时出错: {str(e)}",
-                "model_size": request.model_size,
-                "model_path": model_path
-            }
-            
-    except Exception as e:
-        logger.error(f"删除模型时出错: {str(e)}")
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"删除模型时出错: {str(e)}"
-        )
-
 @router.get("/check_stt_file", summary="检查指定CID的转换后文件是否存在")
 async def check_stt_file(cid: int):
     """
@@ -870,30 +821,3 @@ async def check_stt_file(cid: int):
             status_code=500,
             detail=f"检查STT文件时出错: {str(e)}"
         )
-
-def is_model_downloaded(model_name: str) -> Tuple[bool, Optional[str]]:
-    """检查模型是否已下载
-    
-    Args:
-        model_name: 模型名称
-        
-    Returns:
-        (是否已下载, 模型路径)
-    """
-    # 首先检查操作系统类型，决定缓存目录的位置
-    if os.name == 'nt':  # Windows
-        cache_dir = os.path.join(os.environ.get('USERPROFILE', ''), '.cache', 'huggingface', 'hub')
-    else:  # macOS / Linux
-        cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'huggingface', 'hub')
-        
-    # 可能的模型提供者列表
-    providers = ["guillaumekln", "Systran"]
-    
-    # 检查每个可能的提供者路径
-    for provider in providers:
-        model_id = f"{provider}/faster-whisper-{model_name}"
-        model_dir = os.path.join(cache_dir, 'models--' + model_id.replace('/', '--'))
-        if os.path.exists(model_dir) and os.path.exists(os.path.join(model_dir, 'snapshots')):
-            return True, model_dir
-            
-    return False, None
