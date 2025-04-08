@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from scripts.utils import load_config
 from .wisper import WhisperModel
-from huggingface_hub import snapshot_download
+from huggingface_hub import snapshot_download,try_to_load_from_cache,scan_cache_dir
 
 # 设置日志格式
 logging.basicConfig(level=logging.INFO)
@@ -200,15 +200,6 @@ async def delete_model(request: DeleteModelRequest):
         dict: 包含删除操作结果的信息
     """
     try:
-
-        # 检查模型是否已下载
-        is_downloaded, model_path = is_model_downloaded(request.model_size)
-        if not is_downloaded:
-            return {
-                "success": False,
-                "message": f"模型 {request.model_size} 未下载，无需删除",
-                "model_size": request.model_size
-            }
         
         # 如果模型正在使用中，不允许删除
         global whisper_model
@@ -220,30 +211,22 @@ async def delete_model(request: DeleteModelRequest):
             }
         
         # 删除模型文件
-        import shutil
         try:
-            if model_path and os.path.exists(model_path):
-                shutil.rmtree(model_path)
-                logger.info(f"已成功删除模型: {request.model_size}，路径: {model_path}")
-                return {
-                    "success": True,
-                    "message": f"已成功删除模型: {request.model_size}",
-                    "model_size": request.model_size,
-                    "model_path": model_path
-                }
-            else:
-                return {
-                    "success": False,
-                    "message": f"模型路径不存在: {model_path}",
-                    "model_size": request.model_size
-                }
+            revisions = get_revisions_by_repo_id(f"csukuangfj/sherpa-onnx-whisper-{request.model_size}")
+            scan_cache_dir().delete_revisions(*revisions).execute()
+
+            logger.info(f"已成功删除模型: {request.model_size}")
+            return {
+                "success": True,
+                "message": f"已成功删除模型: {request.model_size}",
+                "model_size": request.model_size,
+            }
         except Exception as e:
             logger.error(f"删除模型文件时出错: {str(e)}")
             return {
                 "success": False,
                 "message": f"删除模型文件时出错: {str(e)}",
                 "model_size": request.model_size,
-                "model_path": model_path
             }
             
     except Exception as e:
@@ -324,6 +307,17 @@ def save_transcript(all_segments, output_path):
         f.write(" ".join(transcript_lines))
     
     print(f"转录结果已保存: {output_path}")
+
+def get_revisions_by_repo_id(repo_id):
+    cache_info = scan_cache_dir()
+    revisions = []
+
+    for i in cache_info.repos:
+        if i.repo_id == repo_id:
+            for r in i.revisions:
+                revisions.append(r.commit_hash)
+    
+    return revisions
 
 async def transcribe_audio(audio_path, model_size="medium", language="zh", cid=None):
     """转录音频文件"""
