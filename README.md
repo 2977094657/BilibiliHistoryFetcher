@@ -11,6 +11,7 @@
 - [x] 获取历史记录
 - [x] 年度总结
 - [x] 视频和图片下载
+  - [x] 一键下载用户所有投稿视频
 - [x] 自动化任务
 - [x] AI 摘要
 - [x] 获取用户评论
@@ -32,37 +33,56 @@
 
 ## 快速开始
 
-### 使用 Docker 安装
+#### 使用 Docker 安装 由 [@eli-yip](https://github.com/eli-yip) 实现 ([#30](https://github.com/2977094657/BilibiliHistoryFetcher/pull/30))
 
-1. 安装[Docker](https://docs.docker.com/get-started/get-docker/)。
-2. 根据你使用的系统构建 Docker 镜像：
-   1. 如果你使用 NVIDIA 显卡，并配置好了 Docker 驱动，请使用`docker build -t bilibili-api:dev -f docker/Dockerfile.cuda .`构建镜像。
-   2. 否则，请使用`docker build -t bilibili-api:dev -f docker/Dockerfile.cpu .`构建镜像。
-3. 根据你使用的镜像创建 Docker 容器：
-   1. 如果你是用`cuda`镜像，则使用`docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --name bilibili-api bilibili-api:dev`创建容器。
-   1. 否则，请使用`docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --name bilibili-api bilibili-api:dev`创建容器。
+1. 安装 [Docker](https://docs.docker.com/get-started/get-docker/)
+2. 根据您的系统构建 Docker 镜像：
+   ```bash
+   # 使用 NVIDIA 显卡
+   docker build -t bilibili-api:dev -f docker/Dockerfile.cuda .
+   ```
+   ```bash
+   # 使用 CPU
+   docker build -t bilibili-api:dev -f docker/Dockerfile.cpu .
+   ```
+3. 创建 Docker 容器：
+   ```bash
+   # 使用 NVIDIA 显卡
+   docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --name bilibili-api bilibili-api:dev
+   ```
+   ```bash
+   # 使用 CPU
+   docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --name bilibili-api bilibili-api:dev
+   ```
 
-### 使用`uv`安装
+   挂载目录说明：
+   - `./config:/app/config`：配置文件目录，用于存储 SESSDATA 和其他配置
+   - `./output:/app/output`：输出目录，用于存储下载的视频、图片和生成的数据
 
-首先，根据[官方文档](https://docs.astral.sh/uv/getting-started/installation/)安装``uv`。
+#### 使用 uv 安装 由 [@eli-yip](https://github.com/eli-yip) 实现 ([#30](https://github.com/2977094657/BilibiliHistoryFetcher/pull/30))
 
-在项目根目录下运行`uv sync`。
+1. 安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)
+2. 在项目根目录运行：
+   ```bash
+   # 安装依赖
+   uv sync
+   ```
+   ```bash
+   # 安装 PyTorch（使用 NVIDIA 显卡）
+   UV_TORCH_BACKEND=auto uv pip install torch torchaudio torchvision
+   ```
+   ```bash
+   # 安装 PyTorch（使用 CPU）
+   UV_TORCH_BACKEND=cpu uv pip install torch torchaudio torchvision
+   ```
+   ```bash
+   # 运行程序
+   uv run main.py
+   ```
 
-如果你是用 NVIDIA 显卡并希望使用 CUDA 加速推理，请使用如下的指令安装`pytorch`：
+#### 使用传统 pip 方式安装
 
-```bash
-UV_TORCH_BACKEND=auto uv pip install torch torchaudio torchvision
-```
-
-否则，使用如下的指令安装`pytorch`：
-
-```bash
-UV_TORCH_BACKEND=cpu uv pip install torch torchaudio torchvision
-```
-
-最后，使用`uv run main.py`运行程序。
-
-### 使用源码安装
+如果您更喜欢使用传统的 pip 作为包管理器，可以按照以下步骤操作：
 
 1. **安装依赖**
 
@@ -159,7 +179,6 @@ tasks:
       - fetch_history
 ```
 
-> **注意**：当程序打包为可执行文件后，计划任务配置文件位于 `_internal/config/scheduler_config.yaml`。
 
 ## 应用打包
 
@@ -246,10 +265,10 @@ MIT License
 
 ## 致谢
 
-- [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect) - 没有它就没有这个项目
-- [Yutto](https://yutto.nyakku.moe/) - 可爱的 B 站视频下载工具
-- [FasterWhisper](https://github.com/SYSTRAN/faster-whisper) - 音频转文字
-- [DeepSeek](https://github.com/deepseek-ai/DeepSeek-R1) - DeepSeek AI API
+- [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect) - 哔哩哔哩-API 收集整理，本项目使用其 API 接口获取 B 站用户数据
+- [Yutto](https://yutto.nyakku.moe/) - 可爱的 B 站视频下载工具，本项目使用其进行视频下载功能
+- [FasterWhisper](https://github.com/SYSTRAN/faster-whisper) - 音频转文字，本项目使用其进行视频音频转文字功能
+- [DeepSeek](https://github.com/deepseek-ai/DeepSeek-R1) - DeepSeek AI API，本项目使用其进行 AI 摘要生成
 - 所有贡献者
 
 ## Star History
