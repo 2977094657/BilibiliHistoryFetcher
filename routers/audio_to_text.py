@@ -515,12 +515,16 @@ async def list_models():
     
     result = []
     for model_info in model_infos:
-        is_downloaded, model_path = is_model_downloaded(model_info["name"])
+
+        model_path_encoder = try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_info["name"]}",f"{model_info["name"]}-encoder.onnx")
+        model_path_decoder = try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_info["name"]}",f"{model_info["name"]}-decoder.onnx")
+        model_path_token = try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_info["name"]}",f"{model_info["name"]}-token.txt")
+        
         result.append(WhisperModelInfo(
             name=model_info["name"],
             description=model_info["description"],
-            is_downloaded=is_downloaded,
-            path=model_path if is_downloaded else None,
+            is_downloaded=True if model_path_encoder and model_path_decoder and model_path_token else False,
+            path=os.path.dirname(model_path_encoder) if model_path_encoder else None,
             params_size=model_info["params_size"],
             recommended_use=model_info["recommended_use"]
         ))
