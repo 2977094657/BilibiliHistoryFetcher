@@ -518,7 +518,7 @@ async def list_models():
 
         model_path_encoder = try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_info["name"]}",f"{model_info["name"]}-encoder.onnx")
         model_path_decoder = try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_info["name"]}",f"{model_info["name"]}-decoder.onnx")
-        model_path_token = try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_info["name"]}",f"{model_info["name"]}-token.txt")
+        model_path_token = try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_info["name"]}",f"{model_info["name"]}-tokens.txt")
         
         result.append(WhisperModelInfo(
             name=model_info["name"],
@@ -613,31 +613,6 @@ def get_cuda_setup_guide(os_name: str) -> str:
    nvcc --version"""
     else:
         return "暂不支持当前操作系统的CUDA安装指南"
-
-def get_model_info(model_size: str) -> ModelInfo:
-    """获取模型信息"""
-    # faster-whisper模型路径
-    model_path = os.path.expanduser(f"~/.cache/huggingface/hub/models--guillaumekln--faster-whisper-{model_size}")
-    is_downloaded = os.path.exists(model_path)
-    
-    # 模型大小信息（近似值）
-    model_sizes = {
-        "tiny": "75MB",
-        "base": "150MB",
-        "small": "400MB",
-        "medium": "1.5GB",
-        "large-v1": "3GB",
-        "large-v2": "3GB",
-        "large-v3": "3GB"
-    }
-    
-    return ModelInfo(
-        model_size=model_size,
-        is_downloaded=is_downloaded,
-        model_path=model_path if is_downloaded else None,
-        download_link=f"https://huggingface.co/guillaumekln/faster-whisper-{model_size}",
-        file_size=model_sizes.get(model_size, "未知")
-    )
 
 @router.get("/check_environment", response_model=EnvironmentCheckResponse)
 async def check_environment():

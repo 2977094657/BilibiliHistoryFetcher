@@ -231,7 +231,7 @@ def install_dependencies(cuda_version=None, skip_torch=False, force_cpu=False):
     print("\n===== 步骤 3/3: 安装其他依赖 =====")
     if platform.system() == "Windows" and cuda_version and not force_cpu:
         print("安装Windows特定的CUDA依赖...")
-        run_command("pip install faster-whisper>=0.9.0 huggingface-hub>=0.19.0", show_output=True)
+        run_command("pip install huggingface-hub>=0.19.0", show_output=True)
     
     print("\n所有依赖安装完成！")
 
