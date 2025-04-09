@@ -26,68 +26,54 @@ class WhisperModel:
         self.__init_encoder()
         self.__init_decoder()
 
+
     def run(self, audio_path, language)->Tuple[list, dict]:
         self.language = language
 
         # 计算音频特征
         mel = compute_features(audio_path, dim=self.n_mels)
+        outputs = []
 
-        # 运行编码器
-        n_layer_cross_k, n_layer_cross_v = self.__run_encoder(mel)
+        # 分批次计算,每个批次30秒
+        # TODO:并行计算
+        # see: https://github.com/SYSTRAN/faster-whisper/pull/1106
+        for m in mel:
+            m = np.expand_dims(m, axis=0)
 
-        # 选择语言
-        if self.language is not None:
-            if self.is_multilingual is False and self.language != "en":
-                raise ValueError("This model supports only English.")
+            # 运行编码器
+            n_layer_cross_k, n_layer_cross_v = self.__run_encoder(m)
 
-            if self.language not in self.lang2id:
-                raise ValueError("Invalid language")
+            # 选择语言
+            if self.language is not None:
+                if self.is_multilingual is False and self.language != "en":
+                    raise ValueError("This model supports only English.")
 
-            # [sot, lang, task, notimestamps]
-            self.sot_sequence[1] = self.lang2id[self.language]
-        elif self.is_multilingual is True:
-            print("detecting language")
-            lang = self.__detect_language(n_layer_cross_k, n_layer_cross_v)
-            self.sot_sequence[1] = lang
-        
-        # 选择任务
-        if self.task is not None:
-            if self.is_multilingual is False and self.task != "transcribe":
-                raise ValueError("This model supports only English.")
+                if self.language not in self.lang2id:
+                    raise ValueError("Invalid language")
+
+                # [sot, lang, task, notimestamps]
+                self.sot_sequence[1] = self.lang2id[self.language]
+            elif self.is_multilingual is True:
+                print("detecting language")
+                lang = self.__detect_language(n_layer_cross_k, n_layer_cross_v)
+                self.sot_sequence[1] = lang
             
-            assert self.task in ["transcribe", "translate"], self.task
+            # 选择任务
+            if self.task is not None:
+                if self.is_multilingual is False and self.task != "transcribe":
+                    raise ValueError("This model supports only English.")
+                
+                assert self.task in ["transcribe", "translate"], self.task
 
-            if self.task == "translate":
-                self.sot_sequence[2] = self.translate
+                if self.task == "translate":
+                    self.sot_sequence[2] = self.translate
 
-        # 开辟KVCache空间
-        n_layer_self_k_cache, n_layer_self_v_cache = self.__get_self_cache()
+            # 开辟KVCache空间
+            n_layer_self_k_cache, n_layer_self_v_cache = self.__get_self_cache()
 
-        # 运行解码器
-        tokens = np.array([self.sot_sequence], dtype=np.int64)
-        offset = np.zeros(1, dtype=np.int64)
-        logits, n_layer_self_k_cache, n_layer_self_v_cache = self.__run_decoder(
-            tokens=tokens,
-            n_layer_self_k_cache=n_layer_self_k_cache,
-            n_layer_self_v_cache=n_layer_self_v_cache,
-            n_layer_cross_k=n_layer_cross_k,
-            n_layer_cross_v=n_layer_cross_v,
-            offset=offset,
-        )
-        offset += len(self.sot_sequence)
-        # logits.shape (batch_size, tokens.shape[1], vocab_size)
-        logits = logits[0, -1]
-        self.__suppress_tokens(logits, is_initial=True)
-        #  logits = logits.softmax(dim=-1)
-        # for greedy search, we don't need to compute softmax or log_softmax
-        max_token_id = logits.argmax(axis=-1)
-        results = []
-        for i in range(self.n_text_ctx):
-            if max_token_id == self.eot:
-                break
-            results.append(max_token_id.item())
-            tokens = np.array([[results[-1]]])
-
+            # 运行解码器
+            tokens = np.array([self.sot_sequence], dtype=np.int64)
+            offset = np.zeros(1, dtype=np.int64)
             logits, n_layer_self_k_cache, n_layer_self_v_cache = self.__run_decoder(
                 tokens=tokens,
                 n_layer_self_k_cache=n_layer_self_k_cache,
@@ -96,23 +82,45 @@ class WhisperModel:
                 n_layer_cross_v=n_layer_cross_v,
                 offset=offset,
             )
-            offset += 1
+            offset += len(self.sot_sequence)
+            # logits.shape (batch_size, tokens.shape[1], vocab_size)
             logits = logits[0, -1]
-            self.__suppress_tokens(logits, is_initial=False)
+            self.__suppress_tokens(logits, is_initial=True)
+            #  logits = logits.softmax(dim=-1)
+            # for greedy search, we don't need to compute softmax or log_softmax
             max_token_id = logits.argmax(axis=-1)
+            results = []
+            for i in range(self.n_text_ctx):
+                if max_token_id == self.eot:
+                    break
+                results.append(max_token_id.item())
+                tokens = np.array([[results[-1]]])
 
-        # 解码token
-        token_table = load_tokens(self.tokens_file)
-        s = b""
-        for i in results:
-            if i in token_table:
-                s += base64.b64decode(token_table[i])
+                logits, n_layer_self_k_cache, n_layer_self_v_cache = self.__run_decoder(
+                    tokens=tokens,
+                    n_layer_self_k_cache=n_layer_self_k_cache,
+                    n_layer_self_v_cache=n_layer_self_v_cache,
+                    n_layer_cross_k=n_layer_cross_k,
+                    n_layer_cross_v=n_layer_cross_v,
+                    offset=offset,
+                )
+                offset += 1
+                logits = logits[0, -1]
+                self.__suppress_tokens(logits, is_initial=False)
+                max_token_id = logits.argmax(axis=-1)
 
-        #print(s.decode().strip())
+            # 解码token
+            token_table = load_tokens(self.tokens_file)
+            s = b""
+            for i in results:
+                if i in token_table:
+                    s += base64.b64decode(token_table[i])
 
-        return s.decode().strip(), {"language":self.language,"duration":float(mel.shape[-1]/10)}
+            outputs.extend([s.decode().strip()])
 
-    def get_state():
+        return outputs, {"language":self.language,"duration":float(mel.shape[-1]/10)}
+
+    def get_progress()->tuple[int,int]:
         return
 
     def __init_encoder(self):
@@ -310,21 +318,36 @@ def compute_features(filename: str, dim: int = 80) -> np.ndarray:
     # We pad 1500 frames at the end so that it is able to detect eot
     # You can use another value instead of 1500.
     #mel = torch.nn.functional.pad(mel, (0, 0, 0, 1500), "constant", 0)
-    mel = np.pad(mel, pad_width=((0, 1500), (0, 0)), mode='constant', constant_values=0)
+    #mel = np.pad(mel, pad_width=((0, 1500), (0, 0)), mode='constant', constant_values=0)
     # Note that if it throws for a multilingual model,
     # please use a larger value, say 300
 
-    target = 3000
-    if mel.shape[0] > target:
-        # -50 so that there are some zero tail paddings.
-        mel = mel[: target - 50]
-        #mel = torch.nn.functional.pad(mel, (0, 0, 0, 50), "constant", 0)
-        mel = np.pad(mel, pad_width=((0, 50), (0, 0)), mode='constant', constant_values=0)
+    # target = 3000
+    # if mel.shape[0] > target:
+    #     # -50 so that there are some zero tail paddings.
+    #     mel = mel[: target - 50]
+    #     #mel = torch.nn.functional.pad(mel, (0, 0, 0, 50), "constant", 0)
+    #     mel = np.pad(mel, pad_width=((0, 50), (0, 0)), mode='constant', constant_values=0)
 
-    # We don't need to pad it to 30 seconds now!
-    #  mel = torch.nn.functional.pad(mel, (0, 0, 0, target - mel.shape[0]), "constant", 0)
+    # # We don't need to pad it to 30 seconds now!
+    # #  mel = torch.nn.functional.pad(mel, (0, 0, 0, target - mel.shape[0]), "constant", 0)
 
-    #mel = mel.T.unsqueeze(0)
-    mel = np.expand_dims(mel.T, axis=0)
+    # #mel = mel.T.unsqueeze(0)
+    # mel = np.expand_dims(mel.T, axis=0)
 
-    return mel
+    # return mel
+
+    target_segment = 3000
+    total_length = mel.shape[0]
+    num_segments = (total_length + target_segment - 1) // target_segment
+
+    segments = []
+    for i in range(num_segments):
+        start = i * target_segment
+        end = (i + 1) * target_segment
+        seg = mel[start:end]
+        pad_length = target_segment - seg.shape[0]
+        padded = np.pad(seg, ((0, pad_length), (0, 0)), 'constant')
+        segments.append(padded.T)  # 转置为(80, 3000)
+
+    return np.stack(segments)
