@@ -263,7 +263,8 @@ async def download_video(request: DownloadRequest):
         # 根据用户选择决定是否仅下载音频
         if request.only_audio:
             command.append('--audio-only')
-            command.extend(["--output-format-audio-only","flac"])
+            #command.extend(["--output-format-audio-only","flac"])
+            command.extend(["--acodec","flac:copy"])
         
         # 添加其他 yutto 配置
         if not config['yutto']['resource']['require_subtitle']:

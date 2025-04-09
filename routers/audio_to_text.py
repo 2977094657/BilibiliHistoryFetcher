@@ -12,6 +12,7 @@ import traceback
 from typing import Optional, List, Dict, Tuple, Any
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
+import json
 
 from scripts.utils import load_config
 from .wisper import WhisperModel
@@ -121,8 +122,8 @@ async def load_model(model_size, device=None, compute_type=None):
             return whisper_model
             
         # 检查模型是否已下载
-        is_downloaded, model_path = is_model_downloaded(model_size)
-        if not is_downloaded:
+        model_path = try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_size}",f"{model_size}-tokens.txt")
+        if model_path == None:
             logger.error(f"模型 {model_size} 尚未下载")
             raise HTTPException(
                 status_code=400,
@@ -157,14 +158,17 @@ async def load_model(model_size, device=None, compute_type=None):
             loop = asyncio.get_running_loop()
             whisper_model = await loop.run_in_executor(
                 None, 
-                lambda: WhisperModel(model_size, device=device or "auto", compute_type=compute_type or "auto")
+                lambda: WhisperModel(try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_size}",f"{model_size}-encoder.onnx"),
+                                    try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_size}",f"{model_size}-decoder.onnx"),
+                                    try_to_load_from_cache(f"csukuangfj/sherpa-onnx-whisper-{model_size}",f"{model_size}-tokens.txt"),
+                                    device=device,
+                                    model_size=model_size
+                                    )
             )
             
             load_time = time.time() - start_time
             logger.info(f"模型加载完成，耗时 {load_time:.2f} 秒")
             
-            # 存储模型大小信息
-            whisper_model.model_size = model_size
             return whisper_model
             
         except Exception as e:
@@ -257,7 +261,8 @@ async def download_model(model_size: str):
         model_path = await loop.run_in_executor(
             None,
             lambda: snapshot_download(repo_id=f"csukuangfj/sherpa-onnx-whisper-{model_size}",
-                                      endpoint="https://hf-mirror.com")
+                                      endpoint="https://hf-mirror.com"
+                                      )
         )
         
         download_time = time.time() - start_time
@@ -287,24 +292,14 @@ def format_timestamp(seconds):
     # 始终返回完整的 HH:MM:SS 格式
     return f"{hours:02d}:{minutes:02d}:{seconds_int:02d}"
 
-def save_transcript(all_segments, output_path):
+def save_transcript(all_segments:list[str], output_path:str)->None:
     """保存转录结果为简洁格式，适合节省token"""
     print(f"准备保存转录结果到: {output_path}")
     print(f"处理的片段数量: {len(all_segments)}")
     
     # 整理数据：移除多余的空格和控制字符
     with open(output_path, "w", encoding="utf-8") as f:
-        # 所有片段放在一行，用空格分隔
-        transcript_lines = []
-        for segment in all_segments:
-            # 清理文本，替换实际换行符为空格，去除多余空格
-            text = segment.text.strip().replace("\n", " ")
-            start_time = format_timestamp(segment.start)
-            end_time = format_timestamp(segment.end)
-            # 格式化内容并添加到列表
-            transcript_lines.append(f"{start_time}>{end_time}: {text}")
-        # 将所有片段用空格连接并写入一行
-        f.write(" ".join(transcript_lines))
+        json.dump(all_segments, f, ensure_ascii=False, indent=4)
     
     print(f"转录结果已保存: {output_path}")
 
@@ -342,10 +337,9 @@ async def transcribe_audio(audio_path, model_size="medium", language="zh", cid=N
         
         # 转录音频
         logger.info("开始转录音频...")
-        segments, info = model.transcribe(
+        segments, info = model.run(
             audio_path,
-            language=language,
-            vad_filter=True
+            language=language
         )
         logger.info("音频转录完成")
         
@@ -372,8 +366,8 @@ async def transcribe_audio(audio_path, model_size="medium", language="zh", cid=N
         return {
             "success": True,
             "message": "转录完成",
-            "duration": info.duration,
-            "language_detected": info.language,
+            "duration": info["duration"],
+            "language_detected": info["language"],
             "processing_time": processing_time
         }
         
