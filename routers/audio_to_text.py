@@ -3,14 +3,13 @@
 处理视频语音转文字的API接口
 """
 
-from dataclasses import dataclass
 import os
 import time
 import asyncio
 import signal
 import logging
 import traceback
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TypedDict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 import json
@@ -439,7 +438,7 @@ async def transcribe_audio_api(request: TranscribeRequest):
                         "cid": request.cid,
                     },
                 )
-            request.audio_path = audio_path.path
+            request.audio_path = audio_path["path"]
 
         # 直接调用异步函数
         result = await transcribe_audio(
@@ -580,8 +579,7 @@ async def list_models():
     return result
 
 
-@dataclass
-class AudioPath:
+class AudioPath(TypedDict):
     cid: int
     path: str
 
