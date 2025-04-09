@@ -176,24 +176,38 @@ async def load_model(model_size, device=None):
         logger.info(f"开始加载模型: {model_size}")
 
         try:
+
+            def _ensure_str_or_bytes(value: str | Any | None) -> str:
+                if value is None:
+                    raise ValueError("Expected str or bytes, got None")
+                if isinstance(value, (str)):
+                    return value
+                raise TypeError(f"Expected str or bytes, got {type(value)}")
+
             # 创建WhisperModel实例 - 使用同步方式加载模型，避免事件循环问题
             loop = asyncio.get_running_loop()
             whisper_model = await loop.run_in_executor(
                 None,
                 lambda: WhisperModel(
-                    try_to_load_from_cache(
-                        f"csukuangfj/sherpa-onnx-whisper-{model_size}",
-                        f"{model_size}-encoder.onnx",
+                    _ensure_str_or_bytes(
+                        try_to_load_from_cache(
+                            f"csukuangfj/sherpa-onnx-whisper-{model_size}",
+                            f"{model_size}-encoder.onnx",
+                        )
                     ),
-                    try_to_load_from_cache(
-                        f"csukuangfj/sherpa-onnx-whisper-{model_size}",
-                        f"{model_size}-decoder.onnx",
+                    _ensure_str_or_bytes(
+                        try_to_load_from_cache(
+                            f"csukuangfj/sherpa-onnx-whisper-{model_size}",
+                            f"{model_size}-decoder.onnx",
+                        )
                     ),
-                    try_to_load_from_cache(
-                        f"csukuangfj/sherpa-onnx-whisper-{model_size}",
-                        f"{model_size}-tokens.txt",
+                    _ensure_str_or_bytes(
+                        try_to_load_from_cache(
+                            f"csukuangfj/sherpa-onnx-whisper-{model_size}",
+                            f"{model_size}-tokens.txt",
+                        )
                     ),
-                    device=device,
+                    device=device if device is not None else "",
                     model_size=model_size,
                 ),
             )
