@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 import json
 
 from scripts.utils import load_config
-from .wisper import WhisperModel
+from .whisper import WhisperModel
 from huggingface_hub import snapshot_download,try_to_load_from_cache,scan_cache_dir
 
 # 设置日志格式
