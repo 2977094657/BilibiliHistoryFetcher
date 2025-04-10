@@ -135,7 +135,7 @@ scheduler:
 # DeepSeek API配置
 deepseek:
   # API密钥设置 https://platform.deepseek.com/api_keys
-  api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  api_key: "sk-38c83cef0de6475ea61b5834d985fc73"
   
   # API基础URL
   api_base: "https://api.deepseek.com/v1"
