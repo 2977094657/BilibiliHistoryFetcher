@@ -3,6 +3,8 @@ import logging
 import os
 import sqlite3
 from datetime import datetime
+from pathlib import Path
+from typing import TypedDict
 
 # 配置日志
 # 确保输出目录存在
@@ -38,31 +40,38 @@ logger.addHandler(console_handler)
 logger.propagate = False  # 防止日志消息传播到根日志器
 
 
-def get_json_files(json_root_path):
+class JsonInfo(TypedDict):
+    path: Path
+    year: int
+    month: int
+    day: int
+
+
+def get_json_files(json_root_path: Path) -> list[JsonInfo]:
     """获取所有JSON文件的路径"""
     json_files = []
 
-    for year_dir in os.listdir(json_root_path):
-        year_path = os.path.join(json_root_path, year_dir)
-        if not os.path.isdir(year_path) or not year_dir.isdigit():
+    if not json_root_path.exists():
+        return []
+
+    def is_valid_dir(dir: Path) -> bool:
+        return dir.is_dir() and dir.stem.isdigit()
+
+    for year_dir in json_root_path.iterdir():
+        if not is_valid_dir(year_dir):
             continue
-
-        for month_dir in os.listdir(year_path):
-            month_path = os.path.join(year_path, month_dir)
-            if not os.path.isdir(month_path) or not month_dir.isdigit():
+        for month_dir in year_dir.iterdir():
+            if not is_valid_dir(month_dir):
                 continue
-
-            for day_file in os.listdir(month_path):
-                if not day_file.endswith(".json"):
+            for day_file in month_dir.iterdir():
+                if day_file.suffix != ".json":
                     continue
-
-                day_path = os.path.join(month_path, day_file)
                 json_files.append(
                     {
-                        "path": day_path,
-                        "year": int(year_dir),
-                        "month": int(month_dir),
-                        "day": int(day_file.split(".")[0]),
+                        "path": day_file,
+                        "year": int(year_dir.stem),
+                        "month": int(month_dir.stem),
+                        "day": int(day_file.stem),
                     }
                 )
 
@@ -133,11 +142,12 @@ def get_records_by_date(db_path, table_name, year, month, day):
 
 def check_data_integrity(db_path=None, json_root_path=None):
     """检查数据完整性"""
+    output_dir = Path("output")
     # 配置路径
     if db_path is None:
-        db_path = os.path.join("output", "bilibili_history.db")
+        db_path = output_dir / "bilibili_history.db"
     if json_root_path is None:
-        json_root_path = os.path.join("output", "history_by_date")
+        json_root_path = output_dir / "history_by_date"
 
     logger.info("开始数据完整性检查...")
     logger.info(f"数据库路径: {db_path}")
@@ -167,14 +177,14 @@ def check_data_integrity(db_path=None, json_root_path=None):
     ]
 
     # 遍历所有JSON文件
-    json_files = get_json_files(json_root_path)
-    results["total_json_files"] = len(json_files)
-    logger.info(f"找到 {len(json_files)} 个JSON文件")
+    json_info = get_json_files(json_root_path)
+    results["total_json_files"] = len(json_info)
+    logger.info(f"找到 {len(json_info)} 个JSON文件")
 
     all_json_records = 0
     all_db_records = 0
 
-    for file_info in json_files:
+    for file_info in json_info:
         file_path = file_info["path"]
         year = file_info["year"]
         month = file_info["month"]
