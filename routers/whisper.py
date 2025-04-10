@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import base64
-from typing import Tuple,Union,Optional
+from typing import Tuple, Optional
 
 # third party libs
 import kaldi_native_fbank as knf
@@ -9,11 +9,15 @@ import onnxruntime as ort
 from pydub import AudioSegment
 import librosa
 
+
 @dataclass
 class WhisperModel:
-    encoder: Union[str, bytes]
-    decoder: Union[str, bytes]
+    encoder_path: str
+    decoder_path: str
     tokens_file: str
+
+    encoder: ort.InferenceSession = field(init=False)
+    decoder: ort.InferenceSession = field(init=False)
     language: Optional[str] = "zh"
     task: Optional[str] = "transcribe"
     device: str = "cpu"
@@ -26,8 +30,7 @@ class WhisperModel:
         self.__init_encoder()
         self.__init_decoder()
 
-
-    def run(self, audio_path, language)->Tuple[list, dict]:
+    def run(self, audio_path, language) -> Tuple[list, dict]:
         self.language = language
 
         # 计算音频特征
@@ -57,12 +60,12 @@ class WhisperModel:
                 print("detecting language")
                 lang = self.__detect_language(n_layer_cross_k, n_layer_cross_v)
                 self.sot_sequence[1] = lang
-            
+
             # 选择任务
             if self.task is not None:
                 if self.is_multilingual is False and self.task != "transcribe":
                     raise ValueError("This model supports only English.")
-                
+
                 assert self.task in ["transcribe", "translate"], self.task
 
                 if self.task == "translate":
@@ -118,14 +121,14 @@ class WhisperModel:
 
             outputs.extend([s.decode().strip()])
 
-        return outputs, {"language":self.language,"duration":float(mel.shape[-1]/10)}
-
-    def get_progress()->tuple[int,int]:
-        return
+        return outputs, {
+            "language": self.language,
+            "duration": float(mel.shape[-1] / 10),
+        }
 
     def __init_encoder(self):
         self.encoder = ort.InferenceSession(
-            self.encoder,
+            self.encoder_path,
             sess_options=self.session_opts,
             providers=ort.get_available_providers(),
         )
@@ -157,7 +160,7 @@ class WhisperModel:
 
     def __init_decoder(self):
         self.decoder = ort.InferenceSession(
-            self.decoder,
+            self.decoder_path,
             sess_options=self.session_opts,
             providers=ort.get_available_providers(),
         )
@@ -210,17 +213,21 @@ class WhisperModel:
     def __get_self_cache(self) -> Tuple[np.ndarray, np.ndarray]:
         batch_size = 1
         n_layer_self_k_cache = np.zeros(
-            (self.n_text_layer,
-            batch_size,
-            self.n_text_ctx,
-            self.n_text_state,),
+            (
+                self.n_text_layer,
+                batch_size,
+                self.n_text_ctx,
+                self.n_text_state,
+            ),
             dtype=np.float32,
         )
         n_layer_self_v_cache = np.zeros(
-            (self.n_text_layer,
-            batch_size,
-            self.n_text_ctx,
-            self.n_text_state,),
+            (
+                self.n_text_layer,
+                batch_size,
+                self.n_text_ctx,
+                self.n_text_state,
+            ),
             dtype=np.float32,
         )
         return n_layer_self_k_cache, n_layer_self_v_cache
@@ -245,9 +252,9 @@ class WhisperModel:
     ) -> int:
         tokens = np.array([[self.sot]], dtype=np.int64)
         offset = np.zeros(1, dtype=np.int64)
-        n_layer_self_k_cache, n_layer_self_v_cache = self.get_self_cache()
+        n_layer_self_k_cache, n_layer_self_v_cache = self.__get_self_cache()
 
-        logits, n_layer_self_k_cache, n_layer_self_v_cache = self.run_decoder(
+        logits, n_layer_self_k_cache, n_layer_self_v_cache = self.__run_decoder(
             tokens=tokens,
             n_layer_self_k_cache=n_layer_self_k_cache,
             n_layer_self_v_cache=n_layer_self_v_cache,
@@ -263,6 +270,7 @@ class WhisperModel:
         print("detected language: ", self.id2lang[lang_id])
         return lang_id
 
+
 def load_tokens(filename):
     tokens = dict()
     with open(filename, "r") as f:
@@ -271,10 +279,12 @@ def load_tokens(filename):
             tokens[int(i)] = t
     return tokens
 
+
 def load_audio(filename: str) -> Tuple[np.ndarray, int]:
-    audio = AudioSegment.from_file(filename,
-                                    filename.split(".")[-1],
-                                   )
+    audio = AudioSegment.from_file(
+        filename,
+        filename.split(".")[-1],
+    )
     audio = audio.set_channels(1)
     print(audio.sample_width)
     audio_data = audio.get_array_of_samples()
@@ -282,6 +292,7 @@ def load_audio(filename: str) -> Tuple[np.ndarray, int]:
     data = data.astype(np.float32) / 32767.0
 
     return data, audio.frame_rate
+
 
 def compute_features(filename: str, dim: int = 80) -> np.ndarray:
     """
@@ -293,7 +304,6 @@ def compute_features(filename: str, dim: int = 80) -> np.ndarray:
     """
     wave, sample_rate = load_audio(filename)
     if sample_rate != 16000:
-
         wave = librosa.resample(wave, orig_sr=sample_rate, target_sr=16000)
         sample_rate = 16000
 
@@ -310,15 +320,15 @@ def compute_features(filename: str, dim: int = 80) -> np.ndarray:
 
     features = np.stack(features)
 
-    log_spec = np.log10(np.clip(features, min=1e-10))
+    log_spec = np.log10(np.clip(features, a_min=1e-10, a_max=1e10))
     log_spec = np.maximum(log_spec, log_spec.max() - 8.0)
     mel = (log_spec + 4.0) / 4.0
     # mel (T, 80)
 
     # We pad 1500 frames at the end so that it is able to detect eot
     # You can use another value instead of 1500.
-    #mel = torch.nn.functional.pad(mel, (0, 0, 0, 1500), "constant", 0)
-    #mel = np.pad(mel, pad_width=((0, 1500), (0, 0)), mode='constant', constant_values=0)
+    # mel = torch.nn.functional.pad(mel, (0, 0, 0, 1500), "constant", 0)
+    # mel = np.pad(mel, pad_width=((0, 1500), (0, 0)), mode='constant', constant_values=0)
     # Note that if it throws for a multilingual model,
     # please use a larger value, say 300
 
@@ -347,7 +357,7 @@ def compute_features(filename: str, dim: int = 80) -> np.ndarray:
         end = (i + 1) * target_segment
         seg = mel[start:end]
         pad_length = target_segment - seg.shape[0]
-        padded = np.pad(seg, ((0, pad_length), (0, 0)), 'constant')
+        padded = np.pad(seg, ((0, pad_length), (0, 0)), "constant")
         segments.append(padded.T)  # 转置为(80, 3000)
 
     return np.stack(segments)
