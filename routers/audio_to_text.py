@@ -4,6 +4,7 @@
 """
 
 import os
+from pathlib import Path
 import time
 import asyncio
 import signal
@@ -427,7 +428,7 @@ async def transcribe_audio_api(request: TranscribeRequest):
         # 检查音频文件是否存在
         if not os.path.exists(request.audio_path):
             # 尝试使用CID查找音频文件
-            audio_path = await find_audio_by_cid(request.cid)
+            audio_path = await find_audio(request.cid)
             if not audio_path:
                 raise HTTPException(
                     status_code=404,
@@ -584,7 +585,27 @@ class AudioPath(TypedDict):
     path: str
 
 
-@router.get("/find_audio", summary="根据CID查找音频文件路径")
+async def find_audio(cid: int) -> AudioPath:
+    download_dir = Path("output") / "download_video"
+    audio_files: list[Path] = []
+    patterns = [f"**/*_{cid}.m4a", f"**/*_{cid}.mp4", f"**/*_{cid}.wav"]
+    for p in patterns:
+        audio_files.extend(download_dir.rglob(p))
+
+    if len(audio_files) == 0:
+        raise Exception(f"未找到CID为{cid}的音频文件")
+    else:
+        return AudioPath(cid=cid, path=str(audio_files[0]))
+
+
+class FindAudioResponse(BaseModel):
+    cid: int
+    audio_path: str
+
+
+@router.get(
+    "/find_audio", summary="根据CID查找音频文件路径", response_model=FindAudioResponse
+)
 async def find_audio_by_cid(cid: int):
     """
     根据CID查找对应的音频文件路径
@@ -596,30 +617,9 @@ async def find_audio_by_cid(cid: int):
         音频文件的完整路径
     """
     try:
-        # 构建基础下载目录路径
-        base_dir = os.path.join("./output/download_video")
+        audio_path = await find_audio(cid)
+        return FindAudioResponse(cid=cid, audio_path=audio_path["path"])
 
-        # 遍历所有文件夹，查找包含_cid的文件夹
-        audio_path = None
-        for root, _, files in os.walk(base_dir):
-            # 检查目录名是否以_cid结尾
-            if root.endswith(f"_{cid}"):
-                # 在该目录下查找包含_cid的文件
-                for file in files:
-                    if (
-                        file.endswith(f"_{cid}.m4a")
-                        or file.endswith(f"_{cid}.mp3")
-                        or file.endswith(f"_{cid}.wav")
-                    ):
-                        audio_path = os.path.join(root, file)
-                        break
-                if audio_path:
-                    break
-
-        if not audio_path:
-            raise HTTPException(status_code=404, detail=f"未找到CID为{cid}的音频文件")
-
-        return AudioPath(cid=cid, path=audio_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查找音频文件时出错: {str(e)}")
 
