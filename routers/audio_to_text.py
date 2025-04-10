@@ -5,19 +5,19 @@
 
 import os
 from pathlib import Path
+import shutil
 import time
 import asyncio
 import signal
 import logging
 import traceback
-from typing import Optional, List, Dict, Any, TypedDict
+from typing import Optional, List, Dict, Any, TypedDict, Literal
 from fastapi import APIRouter, HTTPException
+from faster_whisper.transcribe import Segment
 from pydantic import BaseModel, Field
-import json
 
 from scripts.utils import load_config
-from .whisper import WhisperModel
-from huggingface_hub import snapshot_download, try_to_load_from_cache, scan_cache_dir
+from faster_whisper import WhisperModel
 
 # 设置日志格式
 logging.basicConfig(level=logging.INFO)
@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 # 创建API路由
 router = APIRouter()
 config = load_config()
+whisper_model: WhisperModel | None = None
 
 # 全局变量
-whisper_model = None
 model_loading = False
 model_lock = asyncio.Lock()
 
@@ -129,24 +129,21 @@ class DeleteModelRequest(BaseModel):
     )
 
 
-# TODO:模型的的管理,包括下载/删除/载入/弹出/推理,注意并发冲突
-
-
-async def load_model(model_size) -> WhisperModel:
+async def load_model(
+    model_size: str, device: Literal["cpu", "cuda"] = "cpu"
+) -> WhisperModel:
     """加载Whisper模型"""
     global whisper_model, model_loading
 
     try:
         # 检查是否已加载相同型号的模型
-        if whisper_model is not None and whisper_model.model_size == model_size:
+        if whisper_model is not None and whisper_model.model == model_size:
             logger.info(f"使用已加载的模型: {model_size}")
             return whisper_model
 
         # 检查模型是否已下载
-        model_path = try_to_load_from_cache(
-            f"csukuangfj/sherpa-onnx-whisper-{model_size}", f"{model_size}-tokens.txt"
-        )
-        if model_path is None:
+        is_downloaded, _ = is_model_downloaded(model_size)
+        if not is_downloaded:
             logger.error(f"模型 {model_size} 尚未下载")
             raise HTTPException(
                 status_code=400,
@@ -168,58 +165,23 @@ async def load_model(model_size) -> WhisperModel:
                         status_code=500, detail="等待模型加载超时，请稍后重试"
                     )
                 await asyncio.sleep(1)
-            if whisper_model is not None and whisper_model.model_size == model_size:
+            if whisper_model is not None and whisper_model.model == model_size:
                 return whisper_model
 
         model_loading = True
         start_time = time.time()
         logger.info(f"开始加载模型: {model_size}")
 
-        try:
+        loop = asyncio.get_running_loop()
 
-            def _ensure_str(value: str | Any | None) -> str:
-                if value is None:
-                    raise ValueError("Expected str or bytes, got None")
-                if isinstance(value, (str)):
-                    return value
-                raise TypeError(f"Expected str or bytes, got {type(value)}")
-
-            loop = asyncio.get_running_loop()
-            whisper_model = await loop.run_in_executor(
-                None,
-                lambda: WhisperModel(
-                    _ensure_str(
-                        try_to_load_from_cache(
-                            f"csukuangfj/sherpa-onnx-whisper-{model_size}",
-                            f"{model_size}-encoder.onnx",
-                        )
-                    ),
-                    _ensure_str(
-                        try_to_load_from_cache(
-                            f"csukuangfj/sherpa-onnx-whisper-{model_size}",
-                            f"{model_size}-decoder.onnx",
-                        )
-                    ),
-                    _ensure_str(
-                        try_to_load_from_cache(
-                            f"csukuangfj/sherpa-onnx-whisper-{model_size}",
-                            f"{model_size}-tokens.txt",
-                        )
-                    ),
-                    model_size=model_size,
-                ),
-            )
-
-            load_time = time.time() - start_time
-            logger.info(f"模型加载完成，耗时 {load_time:.2f} 秒")
-
-            return whisper_model
-
-        except Exception as e:
-            logger.error(f"模型加载失败: {str(e)}")
-            logger.error(f"错误堆栈: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"模型加载失败: {str(e)}")
-
+        whisper_model = await loop.run_in_executor(
+            None, lambda: WhisperModel(model_size, device=device)
+        )
+        if whisper_model is None:
+            raise Exception("unable to load model")
+        load_time = time.time() - start_time
+        logger.info(f"模型加载完成，耗时 {load_time:.2f} 秒")
+        return whisper_model
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e
@@ -245,41 +207,47 @@ async def delete_model(request: DeleteModelRequest):
     try:
         # 如果模型正在使用中，不允许删除
         global whisper_model
-        if whisper_model is not None and whisper_model.model_size == request.model_size:
+        if whisper_model is not None and whisper_model.model == request.model_size:
             return {
                 "success": False,
                 "message": f"模型 {request.model_size} 当前正在使用中，无法删除。请先关闭使用该模型的任务后再尝试删除。",
                 "model_size": request.model_size,
             }
 
-        # 删除模型文件
-        try:
-            revisions = get_revisions_by_repo_id(
-                f"csukuangfj/sherpa-onnx-whisper-{request.model_size}"
-            )
-            scan_cache_dir().delete_revisions(*revisions).execute()
-
-            logger.info(f"已成功删除模型: {request.model_size}")
-            return {
-                "success": True,
-                "message": f"已成功删除模型: {request.model_size}",
-                "model_size": request.model_size,
-            }
-        except Exception as e:
-            logger.error(f"删除模型文件时出错: {str(e)}")
+        is_downloaded, model_path = is_model_downloaded(request.model_size)
+        if not is_downloaded:
             return {
                 "success": False,
-                "message": f"删除模型文件时出错: {str(e)}",
+                "message": f"模型 {request.model_size} 未下载，无需删除",
                 "model_size": request.model_size,
             }
+        if model_path is None:
+            raise FileNotFoundError()
+        shutil.rmtree(model_path)
 
+        logger.info(f"已成功删除模型: {request.model_size}")
+        return {
+            "success": True,
+            "message": f"已成功删除模型: {request.model_size}",
+            "model_size": request.model_size,
+        }
     except Exception as e:
         logger.error(f"删除模型时出错: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"删除模型时出错: {str(e)}")
 
 
-@router.post("/download_model", summary="下载指定的Whisper模型")
+class DownloadModelResponse(BaseModel):
+    status: str
+    message: str
+    model_path: str
+
+
+@router.post(
+    "/download_model",
+    summary="下载指定的Whisper模型",
+    response_model=DownloadModelResponse,
+)
 async def download_model(model_size: str):
     """
     下载指定的Whisper模型
@@ -290,29 +258,32 @@ async def download_model(model_size: str):
     try:
         # 创建临时的WhisperModel实例来触发下载
         # 注意：这里会阻塞直到下载完成
+        is_downloaded, model_path = is_model_downloaded(model_size)
+        if is_downloaded:
+            return {
+                "status": "already_downloaded",
+                "message": f"模型 {model_size} 已下载",
+                "model_path": model_path,
+            }
+
         logger.info(f"开始下载模型: {model_size}")
         start_time = time.time()
 
-        # 使用线程执行器来避免阻塞
-        # doc: https://huggingface.co/docs/huggingface_hub/main/en/guides/download
         loop = asyncio.get_event_loop()
-        model_path = await loop.run_in_executor(
-            None,
-            lambda: snapshot_download(
-                repo_id=f"csukuangfj/sherpa-onnx-whisper-{model_size}",
-                endpoint="https://hf-mirror.com",
-            ),
-        )
+        await loop.run_in_executor(None, lambda: WhisperModel(model_size, device="cpu"))
+
+        _, model_path = is_model_downloaded(model_size)
+        if model_path is None:
+            raise FileNotFoundError()
 
         download_time = time.time() - start_time
         logger.info(f"模型下载完成，耗时: {download_time:.2f} 秒")
 
-        return {
-            "status": "success",
-            "message": f"模型 {model_size} 下载完成",
-            "model_path": model_path,
-            "download_time": f"{download_time:.2f}秒",
-        }
+        return DownloadModelResponse(
+            status="success",
+            message=f"模型 {model_size} 下载完成",
+            model_path=model_path,
+        )
 
     except Exception as e:
         logger.error(f"模型下载失败: {str(e)}")
@@ -330,28 +301,26 @@ def format_timestamp(seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds_int:02d}"
 
 
-def save_transcript(all_segments: list[str], output_path: str) -> None:
+def save_transcript(all_segments: list[Segment], output_path: str) -> None:
     """保存转录结果为简洁格式，适合节省token"""
     print(f"准备保存转录结果到: {output_path}")
     print(f"处理的片段数量: {len(all_segments)}")
 
     # 整理数据：移除多余的空格和控制字符
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(all_segments, f, ensure_ascii=False, indent=4)
+        # 所有片段放在一行，用空格分隔
+        transcript_lines = []
+        for segment in all_segments:
+            # 清理文本，替换实际换行符为空格，去除多余空格
+            text = segment.text.strip().replace("\n", " ")
+            start_time = format_timestamp(segment.start)
+            end_time = format_timestamp(segment.end)
+            # 格式化内容并添加到列表
+            transcript_lines.append(f"{start_time}>{end_time}: {text}")
+        # 将所有片段用空格连接并写入一行
+        f.write(" ".join(transcript_lines))
 
     print(f"转录结果已保存: {output_path}")
-
-
-def get_revisions_by_repo_id(repo_id):
-    cache_info = scan_cache_dir()
-    revisions = []
-
-    for i in cache_info.repos:
-        if i.repo_id == repo_id:
-            for r in i.revisions:
-                revisions.append(r.commit_hash)
-
-    return revisions
 
 
 async def transcribe_audio(
@@ -369,7 +338,7 @@ async def transcribe_audio(
         logger.info("模型加载完成")
 
         logger.info("开始转录音频...")
-        segments, info = model.run(audio_path, language=language)
+        segments, info = model.transcribe(str(audio_path), language=language)
         logger.info("音频转录完成")
 
         # 处理结果
@@ -395,8 +364,8 @@ async def transcribe_audio(
         return {
             "success": True,
             "message": "转录完成",
-            "duration": info["duration"],
-            "language_detected": info["language"],
+            "duration": info.duration,
+            "language_detected": info.language,
             "processing_time": processing_time,
         }
     except Exception as e:
@@ -522,29 +491,13 @@ async def list_models():
 
     result = []
     for model_info in model_infos:
-        model_path_encoder = try_to_load_from_cache(
-            f"csukuangfj/sherpa-onnx-whisper-{model_info['name']}",
-            f"{model_info['name']}-encoder.onnx",
-        )
-        model_path_decoder = try_to_load_from_cache(
-            f"csukuangfj/sherpa-onnx-whisper-{model_info['name']}",
-            f"{model_info['name']}-decoder.onnx",
-        )
-        model_path_token = try_to_load_from_cache(
-            f"csukuangfj/sherpa-onnx-whisper-{model_info['name']}",
-            f"{model_info['name']}-tokens.txt",
-        )
-
+        is_downloaded, path = is_model_downloaded(model_info["name"])
         result.append(
             WhisperModelInfo(
                 name=model_info["name"],
                 description=model_info["description"],
-                is_downloaded=True
-                if model_path_encoder and model_path_decoder and model_path_token
-                else False,
-                path=os.path.dirname(model_path_encoder)
-                if model_path_encoder
-                else None,
+                is_downloaded=is_downloaded,
+                path=path,
                 params_size=model_info["params_size"],
                 recommended_use=model_info["recommended_use"],
             )
@@ -764,3 +717,37 @@ async def check_stt_file(cid: int):
     except Exception as e:
         logger.error(f"检查STT文件时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"检查STT文件时出错: {str(e)}")
+
+
+def is_model_downloaded(model_name: str) -> tuple[bool, str | None]:
+    """检查模型是否已下载
+
+    Args:
+        model_name: 模型名称
+
+    Returns:
+        (是否已下载, 模型路径)
+    """
+    # 首先检查操作系统类型，决定缓存目录的位置
+    if os.name == "nt":  # Windows
+        cache_dir = os.path.join(
+            os.environ.get("USERPROFILE", ""), ".cache", "huggingface", "hub"
+        )
+    else:  # macOS / Linux
+        cache_dir = os.path.join(
+            os.path.expanduser("~"), ".cache", "huggingface", "hub"
+        )
+
+    # 可能的模型提供者列表
+    providers = ["guillaumekln", "Systran"]
+
+    # 检查每个可能的提供者路径
+    for provider in providers:
+        model_id = f"{provider}/faster-whisper-{model_name}"
+        model_dir = os.path.join(cache_dir, "models--" + model_id.replace("/", "--"))
+        if os.path.exists(model_dir) and os.path.exists(
+            os.path.join(model_dir, "snapshots")
+        ):
+            return True, model_dir
+
+    return False, None

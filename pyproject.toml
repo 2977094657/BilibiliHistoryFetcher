@@ -8,6 +8,7 @@ dependencies = [
   "aiohttp~=3.11.13",
   "email-validator>=2.1.0",
   "fastapi~=0.115.8",
+  "faster-whisper>=1.1.1",
   "httpx~=0.28.1",
   "huggingface-hub>=0.30.2",
   "jieba~=0.42.1",
