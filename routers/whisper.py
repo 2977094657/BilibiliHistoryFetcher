@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import base64
+from pathlib import Path
 from typing import Tuple, Optional
 
 # third party libs
@@ -18,6 +19,7 @@ class WhisperModel:
 
     encoder: ort.InferenceSession = field(init=False)
     decoder: ort.InferenceSession = field(init=False)
+
     language: Optional[str] = "zh"
     task: Optional[str] = "transcribe"
     device: str = "cpu"
@@ -30,7 +32,7 @@ class WhisperModel:
         self.__init_encoder()
         self.__init_decoder()
 
-    def run(self, audio_path, language) -> Tuple[list, dict]:
+    def run(self, audio_path: Path, language: str) -> Tuple[list, dict]:
         self.language = language
 
         # 计算音频特征
@@ -130,7 +132,7 @@ class WhisperModel:
         self.encoder = ort.InferenceSession(
             self.encoder_path,
             sess_options=self.session_opts,
-            providers=ort.get_available_providers(),
+            providers=["CPUExecutionProvider"],
         )
 
         meta = self.encoder.get_modelmeta().custom_metadata_map
@@ -162,7 +164,7 @@ class WhisperModel:
         self.decoder = ort.InferenceSession(
             self.decoder_path,
             sess_options=self.session_opts,
-            providers=ort.get_available_providers(),
+            providers=["CPUExecutionProvider"],
         )
 
     def __run_encoder(
@@ -280,10 +282,10 @@ def load_tokens(filename):
     return tokens
 
 
-def load_audio(filename: str) -> Tuple[np.ndarray, int]:
+def load_audio(path: Path) -> Tuple[np.ndarray, int]:
     audio = AudioSegment.from_file(
-        filename,
-        filename.split(".")[-1],
+        path,
+        path.suffix[1:],
     )
     audio = audio.set_channels(1)
     print(audio.sample_width)
@@ -294,7 +296,7 @@ def load_audio(filename: str) -> Tuple[np.ndarray, int]:
     return data, audio.frame_rate
 
 
-def compute_features(filename: str, dim: int = 80) -> np.ndarray:
+def compute_features(path: Path, dim: int = 80) -> np.ndarray:
     """
     Args:
       filename:
@@ -302,7 +304,7 @@ def compute_features(filename: str, dim: int = 80) -> np.ndarray:
     Returns:
       Return a 1-D float32 tensor of shape (1, 80, 3000) containing the features.
     """
-    wave, sample_rate = load_audio(filename)
+    wave, sample_rate = load_audio(path)
     if sample_rate != 16000:
         wave = librosa.resample(wave, orig_sr=sample_rate, target_sr=16000)
         sample_rate = 16000
@@ -315,7 +317,6 @@ def compute_features(filename: str, dim: int = 80) -> np.ndarray:
     online_whisper_fbank.input_finished()
     for i in range(online_whisper_fbank.num_frames_ready):
         f = online_whisper_fbank.get_frame(i)
-        # f = torch.from_numpy(f)
         features.append(f)
 
     features = np.stack(features)
@@ -358,6 +359,6 @@ def compute_features(filename: str, dim: int = 80) -> np.ndarray:
         seg = mel[start:end]
         pad_length = target_segment - seg.shape[0]
         padded = np.pad(seg, ((0, pad_length), (0, 0)), "constant")
-        segments.append(padded.T)  # 转置为(80, 3000)
+        segments.append(padded.T)
 
     return np.stack(segments)

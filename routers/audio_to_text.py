@@ -132,7 +132,7 @@ class DeleteModelRequest(BaseModel):
 # TODO:模型的的管理,包括下载/删除/载入/弹出/推理,注意并发冲突
 
 
-async def load_model(model_size, device=None):
+async def load_model(model_size) -> WhisperModel:
     """加载Whisper模型"""
     global whisper_model, model_loading
 
@@ -177,37 +177,35 @@ async def load_model(model_size, device=None):
 
         try:
 
-            def _ensure_str_or_bytes(value: str | Any | None) -> str:
+            def _ensure_str(value: str | Any | None) -> str:
                 if value is None:
                     raise ValueError("Expected str or bytes, got None")
                 if isinstance(value, (str)):
                     return value
                 raise TypeError(f"Expected str or bytes, got {type(value)}")
 
-            # 创建WhisperModel实例 - 使用同步方式加载模型，避免事件循环问题
             loop = asyncio.get_running_loop()
             whisper_model = await loop.run_in_executor(
                 None,
                 lambda: WhisperModel(
-                    _ensure_str_or_bytes(
+                    _ensure_str(
                         try_to_load_from_cache(
                             f"csukuangfj/sherpa-onnx-whisper-{model_size}",
                             f"{model_size}-encoder.onnx",
                         )
                     ),
-                    _ensure_str_or_bytes(
+                    _ensure_str(
                         try_to_load_from_cache(
                             f"csukuangfj/sherpa-onnx-whisper-{model_size}",
                             f"{model_size}-decoder.onnx",
                         )
                     ),
-                    _ensure_str_or_bytes(
+                    _ensure_str(
                         try_to_load_from_cache(
                             f"csukuangfj/sherpa-onnx-whisper-{model_size}",
                             f"{model_size}-tokens.txt",
                         )
                     ),
-                    device=device if device is not None else "",
                     model_size=model_size,
                 ),
             )
@@ -356,7 +354,9 @@ def get_revisions_by_repo_id(repo_id):
     return revisions
 
 
-async def transcribe_audio(audio_path, model_size="medium", language="zh", cid=None):
+async def transcribe_audio(
+    audio_path: Path, model_size: str = "medium", language="zh", cid=None
+):
     """转录音频文件"""
     try:
         logger.info(f"开始处理音频文件: {audio_path}")
@@ -364,17 +364,10 @@ async def transcribe_audio(audio_path, model_size="medium", language="zh", cid=N
 
         start_time = time.time()
 
-        # 检查文件是否存在
-        if not os.path.exists(audio_path):
-            logger.error(f"音频文件不存在: {audio_path}")
-            raise HTTPException(status_code=404, detail=f"文件不存在: {audio_path}")
-
-        # 加载模型
         logger.info("准备加载模型...")
         model = await load_model(model_size)
         logger.info("模型加载完成")
 
-        # 转录音频
         logger.info("开始转录音频...")
         segments, info = model.run(audio_path, language=language)
         logger.info("音频转录完成")
@@ -406,10 +399,6 @@ async def transcribe_audio(audio_path, model_size="medium", language="zh", cid=N
             "language_detected": info["language"],
             "processing_time": processing_time,
         }
-
-    except HTTPException as he:
-        # 直接传递HTTP异常
-        raise he
     except Exception as e:
         logger.error(f"转录过程出错: {str(e)}")
         logger.error(f"错误堆栈: {traceback.format_exc()}")
@@ -425,25 +414,12 @@ async def transcribe_audio_api(request: TranscribeRequest):
             f"收到转录请求: {request.audio_path}, 模型: {request.model_size}, 语言: {request.language}, CID: {request.cid}"
         )
 
-        # 检查音频文件是否存在
-        if not os.path.exists(request.audio_path):
-            # 尝试使用CID查找音频文件
-            audio_path = await find_audio(request.cid)
-            if not audio_path:
-                raise HTTPException(
-                    status_code=404,
-                    detail={
-                        "error": "FILE_NOT_FOUND",
-                        "message": f"未找到音频文件: {request.audio_path}，也未找到CID {request.cid} 对应的音频文件",
-                        "audio_path": request.audio_path,
-                        "cid": request.cid,
-                    },
-                )
-            request.audio_path = audio_path["path"]
+        audio_path = Path(request.audio_path)
+        if not audio_path.exists():
+            raise HTTPException(status_code=400, detail="Unable to find audio path")
 
-        # 直接调用异步函数
         result = await transcribe_audio(
-            request.audio_path,
+            audio_path=audio_path,
             model_size=request.model_size,
             language=request.language,
             cid=request.cid,
@@ -460,9 +436,6 @@ async def transcribe_audio_api(request: TranscribeRequest):
             language_detected=result.get("language_detected"),
             cid=request.cid,
         )
-
-    except HTTPException as e:
-        raise e
     except Exception as e:
         logger.error(f"转录过程出错: {str(e)}")
         logger.error(f"错误堆栈: {traceback.format_exc()}")
