@@ -14,6 +14,7 @@ import httpx
 import json
 
 from scripts.utils import load_config
+from scripts.yutto_runner import run_yutto
 
 # 尝试导入 history 模块，用于处理图像 URL
 try:
@@ -29,47 +30,6 @@ router = APIRouter()
 config = load_config()
 
 
-
-# 辅助函数：获取yutto可执行文件路径
-def get_yutto_path() -> str:
-    """
-    获取yutto可执行文件路径
-
-    Returns:
-        yutto可执行文件路径
-
-    Raises:
-        FileNotFoundError: 如果找不到yutto可执行文件
-    """
-    if getattr(sys, 'frozen', False):
-        # 如果是打包后的 exe 运行
-        base_path = os.path.dirname(sys.executable)
-        paths_to_try = [
-            os.path.join(base_path, 'yutto.exe'),  # 尝试主目录
-            os.path.join(base_path, '_internal', 'yutto.exe'),  # 尝试 _internal 目录
-            os.path.join(os.getcwd(), 'yutto.exe'),  # 尝试当前工作目录
-            os.path.join(os.getcwd(), '_internal', 'yutto.exe')  # 尝试当前工作目录的 _internal
-        ]
-
-        yutto_path = None
-        for path in paths_to_try:
-            print(f"尝试路径：{path}")
-            if os.path.exists(path):
-                yutto_path = path
-                print(f"找到 yutto.exe: {path}")
-                break
-
-        if yutto_path is None:
-            raise FileNotFoundError(f"找不到 yutto.exe，已尝试的路径：{', '.join(paths_to_try)}")
-    else:
-        # 如果是直接运行 python 脚本
-        yutto_path = 'yutto'
-        print(f"使用命令：{yutto_path}")
-
-    if not os.path.exists(yutto_path) and getattr(sys, 'frozen', False):
-        raise FileNotFoundError(f"找不到 yutto.exe，已尝试的路径：{yutto_path}")
-
-    return yutto_path
 
 # 辅助函数：检查下载目录和临时目录
 def check_download_directories() -> Tuple[str, str]:
@@ -435,15 +395,11 @@ async def download_video(request: DownloadRequest):
         request: 包含视频 URL 和可选 SESSDATA 的请求对象
     """
     try:
-        # 获取 yutto 可执行文件路径
-        yutto_path = get_yutto_path()
-
         # 检查下载目录和临时目录
         download_dir, tmp_dir = check_download_directories()
 
         # 构建基本命令
         command = [
-            yutto_path,
             request.url,
             '--dir', download_dir,
             '--tmp-dir', tmp_dir,
@@ -453,26 +409,15 @@ async def download_video(request: DownloadRequest):
 
         # 添加下载参数
         command = add_download_params_to_command(command, request)
-
-        # 准备进程参数
-        popen_kwargs = prepare_process_kwargs()
-
-        # 格式化命令
-        command_str = format_command(command)
-
-        # 执行命令
-        print(f"执行下载命令：{command_str}")
-
-        if sys.platform == 'win32':
-            process = subprocess.Popen(command, **popen_kwargs)
-        else:
-            process = subprocess.Popen(command_str, **popen_kwargs)
-
-        # 返回 SSE 响应
-        return StreamingResponse(
-            stream_process_output(process),
-            media_type="text/event-stream"
-        )
+        
+        print(f"执行下载命令：yutto {' '.join(command)}")
+        
+        async def event_stream():
+            async for chunk in run_yutto(command):
+                yield chunk
+            yield "event: close\ndata: close\n\n"
+            
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
     except FileNotFoundError:
         raise HTTPException(
             status_code=500,
@@ -1426,9 +1371,6 @@ async def download_user_videos(request: UserSpaceDownloadRequest):
         request: 包含用户 ID 和可选 SESSDATA 的请求对象
     """
     try:
-        # 获取 yutto 可执行文件路径
-        yutto_path = get_yutto_path()
-
         # 检查下载目录和临时目录
         download_dir, tmp_dir = check_download_directories()
 
@@ -1437,7 +1379,6 @@ async def download_user_videos(request: UserSpaceDownloadRequest):
 
         # 构建基本命令
         command = [
-            yutto_path,
             user_space_url,
             '--batch',  # 批量下载
             '--dir', download_dir,
@@ -1448,26 +1389,15 @@ async def download_user_videos(request: UserSpaceDownloadRequest):
 
         # 添加下载参数
         command = add_download_params_to_command(command, request)
-
-        # 准备进程参数
-        popen_kwargs = prepare_process_kwargs()
-
-        # 格式化命令
-        command_str = format_command(command)
-
-        # 执行命令
-        print(f"执行下载命令：{command_str}")
-
-        if sys.platform == 'win32':
-            process = subprocess.Popen(command, **popen_kwargs)
-        else:
-            process = subprocess.Popen(command_str, **popen_kwargs)
-
-        # 创建一个响应流
-        return StreamingResponse(
-            stream_process_output(process),
-            media_type="text/event-stream"
-        )
+        
+        print(f"执行下载命令：yutto {' '.join(command)}")
+        
+        async def event_stream():
+            async for chunk in run_yutto(command):
+                yield chunk
+            yield "event: close\ndata: close\n\n"
+            
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     except HTTPException:
         raise
@@ -1483,9 +1413,6 @@ async def batch_download(request: BatchDownloadRequest):
         request: 包含多个视频信息和下载选项的请求对象
     """
     try:
-        # 获取 yutto 可执行文件路径
-        yutto_path = get_yutto_path()
-
         # 检查下载目录和临时目录
         download_dir, tmp_dir = check_download_directories()
 
@@ -1506,39 +1433,28 @@ async def batch_download(request: BatchDownloadRequest):
                 # 发送当前下载信息
                 yield f"data: 正在下载第 {current_index}/{total_videos} 个视频: {video.title or video.bvid}\n\n"
 
-                # 构建视频URL
+                # 构建视频 URL
                 video_url = f"https://www.bilibili.com/video/{video.bvid}"
 
-                # 构建命令
-                command = [
-                    yutto_path,
+                # -------------------- 组装 yutto 参数 --------------------
+                argv = [
                     video_url,
                     '--dir', download_dir,
                     '--tmp-dir', tmp_dir,
-                    '--subpath-template', f'{{title}}_{{username}}_{{download_date@%Y%m%d_%H%M%S}}_{video.cid}/{{title}}_{video.cid}',
-                    '--with-metadata'  # 添加元数据文件保存
+                    '--subpath-template',
+                    f'{{title}}_{{username}}_{{download_date@%Y%m%d_%H%M%S}}_{video.cid}/{{title}}_{video.cid}',
+                    '--with-metadata'  # 保存元数据文件
                 ]
+                # 注：add_download_params_to_command 内部会按需追加其它参数
+                argv = add_download_params_to_command(argv, request)
 
-                # 添加下载参数
-                command = add_download_params_to_command(command, request)
+                # 打印调试信息
+                print("执行下载命令：yutto " + ' '.join(argv))
 
-                # 准备进程参数
-                popen_kwargs = prepare_process_kwargs()
-
-                # 格式化命令
-                command_str = format_command(command)
-
+                # -------------------- 执行下载 --------------------
                 try:
-                    # 执行命令
-                    print(f"执行下载命令：{command_str}")
-
-                    if sys.platform == 'win32':
-                        process = subprocess.Popen(command, **popen_kwargs)
-                    else:
-                        process = subprocess.Popen(command_str, **popen_kwargs)
-
-                    # 处理进程输出
-                    async for line in stream_process_output(process):
+                    # 进程内调用 yutto，并实时转发输出
+                    async for line in run_yutto(argv):
                         yield line
 
                     # 发送当前视频下载完成信息
@@ -1582,9 +1498,6 @@ async def download_favorites(request: FavoriteDownloadRequest):
                 detail="未登录：下载收藏夹必须提供 SESSDATA"
             )
 
-        # 获取 yutto 可执行文件路径
-        yutto_path = get_yutto_path()
-
         # 检查下载目录和临时目录
         download_dir, tmp_dir = check_download_directories()
 
@@ -1598,7 +1511,6 @@ async def download_favorites(request: FavoriteDownloadRequest):
 
         # 构建基本命令
         command = [
-            yutto_path,
             favorite_url,
             '--batch',  # 批量下载
             '--dir', download_dir,
@@ -1614,25 +1526,14 @@ async def download_favorites(request: FavoriteDownloadRequest):
         if '--sessdata' not in command:
             command.extend(['--sessdata', sessdata])
 
-        # 准备进程参数
-        popen_kwargs = prepare_process_kwargs()
-
-        # 格式化命令
-        command_str = format_command(command)
-
-        # 执行命令
-        print(f"执行下载命令：{command_str}")
-
-        if sys.platform == 'win32':
-            process = subprocess.Popen(command, **popen_kwargs)
-        else:
-            process = subprocess.Popen(command_str, **popen_kwargs)
-
-        # 创建一个响应流
-        return StreamingResponse(
-            stream_process_output(process),
-            media_type="text/event-stream"
-        )
+        print(f"执行下载命令：yutto {' '.join(command)}")
+        
+        async def event_stream():
+            async for chunk in run_yutto(command):
+                yield chunk
+            yield "event: close\ndata: close\n\n"
+            
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     except HTTPException:
         raise
