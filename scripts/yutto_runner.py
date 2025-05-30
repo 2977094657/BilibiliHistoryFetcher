@@ -3,6 +3,8 @@ import io
 import sys
 from typing import AsyncGenerator
 
+from yutto.__main__ import main as _YUTTO_MAIN
+
 class _AsyncWriter(io.StringIO):
     """自定义的 StringIO：每次 write 时立即通过 Queue 推送到事件循环"""
     def __init__(self, queue: asyncio.Queue[str | None], loop: asyncio.AbstractEventLoop):
@@ -29,10 +31,9 @@ async def run_yutto(argv: list[str]) -> AsyncGenerator[str, None]:
 
     # 在线程池执行同步的 yutto.main
     def _worker():
-        from yutto.__main__ import main as _YUTTO_MAIN
         # 伪装 sys.argv
         argv_backup = sys.argv
-        sys.argv = ["yutto", *argv]
+        sys.argv = ["yutto", *argv, '--no-color']
         try:
             _YUTTO_MAIN()                   # 进入 yutto 的主函数
         except SystemExit:                  # yutto 内部可能调用 sys.exit()
