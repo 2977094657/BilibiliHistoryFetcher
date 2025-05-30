@@ -1,25 +1,7 @@
 import asyncio
 import io
 import sys
-from importlib.metadata import entry_points
 from typing import AsyncGenerator
-
-
-# def _get_yutto_main():
-#     """读取 console_scripts 的入口，返回真正的 main 函数"""
-#     eps = entry_points(group="console_scripts")
-#     if isinstance(eps, dict):               # 3.10+
-#         yutto_ep = eps["yutto"][0]
-#     else:                                   # 3.8 / 3.9
-#         yutto_ep = next(e for e in eps if e.name == "yutto")
-#     return yutto_ep.load()                  # 如 yutto.__main__.main
-
-
-# # 提前加载一次，避免每次调用都解析 entry_points
-# _YUTTO_MAIN = _get_yutto_main()
-
-from yutto.__main__ import main as _YUTTO_MAIN
-
 
 class _AsyncWriter(io.StringIO):
     """自定义的 StringIO：每次 write 时立即通过 Queue 推送到事件循环"""
@@ -47,6 +29,7 @@ async def run_yutto(argv: list[str]) -> AsyncGenerator[str, None]:
 
     # 在线程池执行同步的 yutto.main
     def _worker():
+        from yutto.__main__ import main as _YUTTO_MAIN
         # 伪装 sys.argv
         argv_backup = sys.argv
         sys.argv = ["yutto", *argv]
