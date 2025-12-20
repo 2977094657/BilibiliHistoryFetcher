@@ -3,10 +3,7 @@ version: '3'
 services:
   # 后端服务
   backend:
-    image: bilibili-api:latest
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cuda
+    image: ghcr.io/2977094657/bilibili-history-fetcher:latest
     container_name: bilibili-history-backend
     restart: unless-stopped
     volumes:

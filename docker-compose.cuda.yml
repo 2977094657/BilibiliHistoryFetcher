@@ -1,0 +1,16 @@
+services:
+  backend:
+    image: ghcr.io/2977094657/bilibili-history-fetcher:cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ipc: host
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      stack: 67108864

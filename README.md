@@ -67,7 +67,24 @@
 #### 使用 Docker 安装
 由 [@eli-yip](https://github.com/eli-yip) 实现 ([#30](https://github.com/2977094657/BilibiliHistoryFetcher/pull/30))
 1. 安装 [Docker](https://docs.docker.com/get-started/get-docker/)
-2. 根据您的系统构建 Docker 镜像：
+2. 拉取预构建镜像（推荐）：
+   ```bash
+   # CPU 基础版
+   docker pull ghcr.io/2977094657/bilibili-history-fetcher:latest
+   docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --name bilibili-api ghcr.io/2977094657/bilibili-history-fetcher:latest
+   ```
+   ```bash
+   # NVIDIA GPU（CUDA 版）
+   docker pull ghcr.io/2977094657/bilibili-history-fetcher:cuda
+   docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --name bilibili-api ghcr.io/2977094657/bilibili-history-fetcher:cuda
+   ```
+
+   标签说明：
+   - CPU：`latest` 或 `vX.Y.Z`
+   - CUDA：`cuda` 或 `vX.Y.Z-cuda`
+   - 平台：目前仅提供 `linux/amd64`
+
+3. 从源码构建镜像（可选）：
    ```bash
    # 使用 NVIDIA 显卡
    docker build -t bilibili-api:dev -f docker/Dockerfile.cuda .
@@ -76,7 +93,7 @@
    # 使用 CPU
    docker build -t bilibili-api:dev -f docker/Dockerfile.cpu .
    ```
-3. 创建 Docker 容器：
+4. 创建 Docker 容器（源码构建后的镜像）：
    ```bash
    # 使用 NVIDIA 显卡
    docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --name bilibili-api bilibili-api:dev
@@ -92,22 +109,36 @@
 
 #### 使用 Docker Compose 部署
 
-本项目提供了Docker Compose配置，实现一键部署前后端服务，您只需要一个`docker-compose.yml`文件即可完成整个部署，无需手动构建镜像。
+本项目提供了 Docker Compose 配置，实现一键部署前后端服务。默认使用 CPU 基础版后端镜像；如需 CUDA 版后端，可叠加 `docker-compose.cuda.yml`。
 
 1. 确保已安装 [Docker](https://docs.docker.com/get-started/get-docker/) 和 [Docker Compose](https://docs.docker.com/compose/install/)
 
-2. 下载`docker-compose.yml`文件：
+2. 下载 `docker-compose.yml` 文件（CPU 基础版）：
    - 直接从[这里](https://raw.githubusercontent.com/2977094657/BilibiliHistoryFetcher/master/docker-compose.yml)下载
    - 或使用以下命令下载：
+      ```bash
+      curl -O https://raw.githubusercontent.com/2977094657/BilibiliHistoryFetcher/master/docker-compose.yml
+      # 或
+      wget https://raw.githubusercontent.com/2977094657/BilibiliHistoryFetcher/master/docker-compose.yml
+      ```
+
+   如需 CUDA 版后端，同时下载 `docker-compose.cuda.yml`：
+   - 直接从[这里](https://raw.githubusercontent.com/2977094657/BilibiliHistoryFetcher/master/docker-compose.cuda.yml)下载
+   - 或使用以下命令下载：
      ```bash
-     curl -O https://raw.githubusercontent.com/2977094657/BilibiliHistoryFetcher/master/docker-compose.yml
+     curl -O https://raw.githubusercontent.com/2977094657/BilibiliHistoryFetcher/master/docker-compose.cuda.yml
      # 或
-     wget https://raw.githubusercontent.com/2977094657/BilibiliHistoryFetcher/master/docker-compose.yml
+     wget https://raw.githubusercontent.com/2977094657/BilibiliHistoryFetcher/master/docker-compose.cuda.yml
      ```
 
-3. 使用Docker Compose启动服务：
+3. 使用 Docker Compose 启动服务：
    ```bash
+   # CPU 基础版
    docker-compose up -d
+   ```
+   ```bash
+   # NVIDIA GPU（CUDA 版）
+   docker-compose -f docker-compose.yml -f docker-compose.cuda.yml up -d
    ```
 
 4. 服务启动后访问：
