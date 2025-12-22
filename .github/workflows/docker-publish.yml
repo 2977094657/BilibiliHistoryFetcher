@@ -12,7 +12,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/bilibili-history-fetcher
+  IMAGE_NAME: ${{ github.repository_owner }}/bili-history-fetcher
+  LEGACY_IMAGE_NAME: ${{ github.repository_owner }}/bilibili-history-fetcher
 
 jobs:
   build-and-push:
@@ -49,7 +50,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+            ${{ env.REGISTRY }}/${{ env.LEGACY_IMAGE_NAME }}
           tags: |
             type=raw,value=${{ matrix.variant.raw_tag }}
             type=ref,event=tag,suffix=${{ matrix.variant.version_suffix }}

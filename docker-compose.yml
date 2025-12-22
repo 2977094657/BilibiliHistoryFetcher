@@ -3,7 +3,7 @@ version: '3'
 services:
   # 后端服务
   backend:
-    image: ghcr.io/2977094657/bilibili-history-fetcher:latest
+    image: ghcr.io/2977094657/bili-history-fetcher:latest
     container_name: bilibili-history-backend
     restart: unless-stopped
     volumes:
@@ -17,18 +17,14 @@ services:
 
   # 前端服务
   frontend:
-    image: bilibili-frontend:latest
-    build:
-      context: https://github.com/2977094657/BiliHistoryFrontend.git
-      dockerfile: Dockerfile
-    container_name: bilibili-history-frontend
+    image: ghcr.io/2977094657/bili-history-frontend:latest
+    container_name: bili-history-frontend-web
     restart: unless-stopped
     ports:
       - "5173:80"
     depends_on:
       - backend
     environment:
-      - BACKEND_URL=http://backend:8899
       - TZ=Asia/Shanghai
 
 networks:

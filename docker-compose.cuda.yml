@@ -1,6 +1,6 @@
 services:
   backend:
-    image: ghcr.io/2977094657/bilibili-history-fetcher:cuda
+    image: ghcr.io/2977094657/bili-history-fetcher:cuda
     deploy:
       resources:
         reservations:

@@ -70,14 +70,16 @@
 2. 拉取预构建镜像（推荐）：
    ```bash
    # CPU 基础版
-   docker pull ghcr.io/2977094657/bilibili-history-fetcher:latest
-   docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --name bilibili-api ghcr.io/2977094657/bilibili-history-fetcher:latest
+   docker pull ghcr.io/2977094657/bili-history-fetcher:latest
+   docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --name bilibili-api ghcr.io/2977094657/bili-history-fetcher:latest
    ```
    ```bash
    # NVIDIA GPU（CUDA 版）
-   docker pull ghcr.io/2977094657/bilibili-history-fetcher:cuda
-   docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --name bilibili-api ghcr.io/2977094657/bilibili-history-fetcher:cuda
+   docker pull ghcr.io/2977094657/bili-history-fetcher:cuda
+   docker run -d -v ./config:/app/config -v ./output:/app/output -p 8899:8899 --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --name bilibili-api ghcr.io/2977094657/bili-history-fetcher:cuda
    ```
+
+   提示：为统一镜像命名，后端镜像后续使用 `ghcr.io/2977094657/bili-history-fetcher`；如你当前拉取不到该镜像名，请先使用旧镜像名 `ghcr.io/2977094657/bilibili-history-fetcher`，并在后续更新为新镜像名（旧镜像名会继续同步推送一段时间以兼容历史脚本）。
 
    标签说明：
    - CPU：`latest` 或 `vX.Y.Z`
