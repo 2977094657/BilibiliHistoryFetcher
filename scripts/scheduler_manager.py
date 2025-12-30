@@ -52,12 +52,30 @@ class SchedulerManager:
         # 从config.yaml读取服务器配置
         config = load_config()
         server_config = config.get('server', {})
-        host = server_config.get('host', '0.0.0.0')
+        bind_host = server_config.get('host', '0.0.0.0')
         port = server_config.get('port', 8899)
 
         # 根据服务器配置构建base_url
-        self.base_url = f"http://{host}:{port}"
-        print(f"从主配置文件读取服务器配置: {host}:{port}")
+        #
+        # 注意: 0.0.0.0/:: 是“监听所有网卡”的绑定地址，不能作为客户端连接目标。
+        # 调度器的内部HTTP调用应使用本机回环地址，否则会出现 `All connection attempts failed`。
+        connect_host = (bind_host or "").strip()
+        if not connect_host or connect_host in {"0.0.0.0", "::", "0:0:0:0:0:0:0:0"}:
+            connect_host = "127.0.0.1"
+
+        ssl_enabled = bool(server_config.get('ssl_enabled', False))
+        ssl_certfile = server_config.get('ssl_certfile')
+        ssl_keyfile = server_config.get('ssl_keyfile')
+        scheme = "https" if (ssl_enabled and ssl_certfile and ssl_keyfile) else "http"
+
+        url_host = connect_host
+        if ":" in url_host and not url_host.startswith("["):
+            url_host = f"[{url_host}]"
+
+        self.base_url = f"{scheme}://{url_host}:{port}"
+        print(f"从主配置文件读取服务器监听地址: {bind_host}:{port}")
+        if connect_host != bind_host:
+            print(f"检测到监听地址为 {bind_host}，调度器内部请求将使用 {connect_host} (本机回环)")
         print(f"设置base_url为: {self.base_url}")
 
         # 获取增强版数据库实例
@@ -78,9 +96,6 @@ class SchedulerManager:
 
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
-
-            # 不再从scheduler_config.yaml读取base_url
-            # base_url已在__init__方法中从主配置文件读取
 
             # 处理错误处理配置
             if 'error_handling' in config:

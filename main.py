@@ -284,7 +284,7 @@ async def lifespan(app: FastAPI):
         # 显示调度器配置
         logger.info(f"调度器配置:")
         logger.info(f"  基础URL: {scheduler_manager.base_url}")
-        logger.info(f"  (从 config/config.yaml 的 server 配置生成)")
+        logger.info("  (从 config/config.yaml 的 server 配置生成；当 host 为 0.0.0.0/:: 时自动使用 127.0.0.1)")
 
         # 检查基础URL是否包含协议前缀
         if not scheduler_manager.base_url.startswith(('http://', 'https://')):
