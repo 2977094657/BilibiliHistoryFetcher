@@ -1109,7 +1109,7 @@ def get_video_tracking_stats(limit: int = 20) -> List[Dict[str, Any]]:
             if conn:
                 conn.close()
 
-def cleanup_inactive_video_records():
+def cleanup_inactive_video_records(year: Optional[int] = None):
     """
     清理已经不在热门列表的视频数据，只保留首条和末条记录
 
@@ -1117,6 +1117,9 @@ def cleanup_inactive_video_records():
     1. 找出所有已经不在热门列表的视频（is_active=0）
     2. 对每个视频，保留其第一条和最后一条记录
     3. 删除该视频的所有中间记录
+
+    Args:
+        year: 指定清理的年份；不传则清理所有年份数据库
 
     Returns:
         dict: 清理统计信息
@@ -1130,10 +1133,17 @@ def cleanup_inactive_video_records():
     }
 
     try:
-        # 获取所有年份的数据库连接
-        connections = get_multi_year_connections()
+        # 获取数据库连接（支持按年清理）
+        if year is None:
+            connections = get_multi_year_connections()
+        else:
+            db_filename = f"bilibili_popular_{year}.db"
+            db_path = get_database_path(db_filename)
+            if not os.path.exists(db_path):
+                raise FileNotFoundError(f"未找到{year}年的热门视频数据库文件: {db_path}")
+            connections = {year: get_db_connection(year)}
 
-        for year, conn in connections.items():
+        for db_year, conn in connections.items():
             year_stats = {
                 "processed_videos": 0,
                 "deleted_records": 0
@@ -1152,7 +1162,7 @@ def cleanup_inactive_video_records():
 
                 inactive_videos = [row[0] for row in cursor.fetchall()]
 
-                print(f"{year}年数据库中找到 {len(inactive_videos)} 个不活跃视频")
+                print(f"{db_year}年数据库中找到 {len(inactive_videos)} 个不活跃视频")
 
                 for bvid in inactive_videos:
                     # 2. 获取该视频的所有记录时间戳，按时间排序
@@ -1201,25 +1211,25 @@ def cleanup_inactive_video_records():
                 # 更新总统计信息
                 stats["processed_videos"] += year_stats["processed_videos"]
                 stats["deleted_records"] += year_stats["deleted_records"]
-                stats["year_stats"][year] = year_stats
+                stats["year_stats"][db_year] = year_stats
 
             except Exception as e:
                 # 发生错误，回滚事务
                 cursor.execute("ROLLBACK")
-                print(f"{year}年数据清理时出错: {e}")
+                print(f"{db_year}年数据清理时出错: {e}")
                 stats["error_count"] += 1
-                stats["year_stats"][year] = {"error": str(e)}
+                stats["year_stats"][db_year] = {"error": str(e)}
 
         print(f"数据清理完成: 处理了 {stats['processed_videos']} 个视频，删除了 {stats['deleted_records']} 条记录")
 
         # 执行VACUUM操作回收空间
-        for year, conn in connections.items():
+        for db_year, conn in connections.items():
             try:
-                print(f"正在对{year}年数据库执行VACUUM操作...")
+                print(f"正在对{db_year}年数据库执行VACUUM操作...")
                 conn.execute("VACUUM")
-                print(f"{year}年数据库VACUUM操作完成")
+                print(f"{db_year}年数据库VACUUM操作完成")
             except Exception as e:
-                print(f"{year}年数据库VACUUM操作失败: {e}")
+                print(f"{db_year}年数据库VACUUM操作失败: {e}")
 
         return stats
 

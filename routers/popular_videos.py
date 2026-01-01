@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
 from typing import Dict, Any, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import asyncio
 import time
 from datetime import datetime
@@ -10,6 +10,7 @@ from scripts.popular_videos import (
     query_recent_videos,
     get_fetch_history,
     get_video_tracking_stats,
+    get_all_year_dbs,
     cleanup_inactive_video_records
 )
 
@@ -34,6 +35,12 @@ class TrackingStatsResponse(BaseModel):
     message: Optional[str] = None
     total: Optional[int] = None
     data: Optional[List[Dict[str, Any]]] = None
+
+class PopularYearsResponse(BaseModel):
+    status: str
+    message: Optional[str] = None
+    data: List[int] = Field(default_factory=list, description="热门视频数据库可用年份（降序）")
+    default_year: Optional[int] = Field(default=None, description="建议默认选择年份（最新年份）")
 
 # 用于存储后台任务的状态和清理机制
 task_status = {}
@@ -309,6 +316,32 @@ async def get_video_tracking_stats_api(
             detail=f"获取视频热门跟踪统计失败: {str(e)}"
         )
 
+@router.get("/popular/years", summary="获取热门视频数据库可用年份", response_model=PopularYearsResponse)
+async def get_popular_db_years_api():
+    """
+    获取热门视频按年分库的可用年份列表（用于前端下拉菜单）
+    """
+    try:
+        years = sorted(get_all_year_dbs(), reverse=True)
+        if not years:
+            return PopularYearsResponse(
+                status="success",
+                message="未找到任何热门视频数据库文件",
+                data=[],
+                default_year=None
+            )
+
+        return PopularYearsResponse(
+            status="success",
+            data=years,
+            default_year=years[0]
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取热门视频数据库年份失败: {str(e)}"
+        )
+
 @router.get("/popular/tasks", summary="获取所有热门视频获取任务")
 async def list_all_tasks():
     """
@@ -343,24 +376,88 @@ async def list_all_tasks():
     }
 
 @router.post("/popular/cleanup", summary="清理已经不在热门列表的视频数据")
-async def trigger_data_cleanup(background_tasks: BackgroundTasks):
+async def trigger_data_cleanup(
+    background_tasks: BackgroundTasks,
+    year: Optional[int] = Query(None, description="要清理的年份，不传则清理所有年份")
+):
     """
     触发清理已经不在热门列表的视频数据的操作
     
     此操作会删除所有已经不在热门列表的视频中间的记录，只保留首条和末条记录。
     由于清理操作可能需要较长时间，此API会在后台执行清理并立即返回。
-    清理结果将记录在日志中。
+    清理结果将记录在日志中，也可通过任务ID查询结果。
+
+    - **year**: 指定清理的年份；不传则清理所有年份数据库
     """
+    available_years = sorted(get_all_year_dbs(), reverse=True)
+    if year is not None and year not in available_years:
+        return {
+            "status": "error",
+            "message": f"未找到 {year} 年的热门视频数据库。可用年份：{', '.join(map(str, available_years)) if available_years else '无'}",
+            "available_years": available_years
+        }
+
+    # 清理过期任务
+    cleanup_old_tasks()
+
+    # 生成唯一任务ID
+    import uuid
+    task_id = str(uuid.uuid4())
+
+    # 创建初始状态响应
+    task_status[task_id] = {
+        "status": "processing",
+        "message": "数据清理任务已开始处理",
+        "progress": 0,
+        "result": None,
+        "timestamp": time.time(),
+        "meta": {
+            "task_type": "cleanup",
+            "year": year,
+            "available_years": available_years,
+            "target_years": [year] if year is not None else available_years
+        }
+    }
+
     # 定义后台任务函数
     async def run_cleanup_task():
         # 在异步上下文中执行同步耗时操作
         loop = asyncio.get_event_loop()
         try:
             # 使用run_in_executor在线程池中执行同步操作
-            stats = await loop.run_in_executor(None, cleanup_inactive_video_records)
+            stats = await loop.run_in_executor(None, cleanup_inactive_video_records, year)
             print(f"数据清理完成，统计信息：{stats}")
+
+            task_status[task_id] = {
+                "status": "completed",
+                "message": "数据清理完成",
+                "progress": 100,
+                "timestamp": time.time(),
+                "result": {
+                    "status": "success",
+                    "message": "数据清理完成",
+                    "year": year,
+                    "available_years": available_years,
+                    "data": stats
+                },
+                "meta": task_status[task_id].get("meta", {})
+            }
         except Exception as e:
-            print(f"数据清理过程中出错：{str(e)}")
+            error_message = f"数据清理过程中出错：{str(e)}"
+            print(error_message)
+            task_status[task_id] = {
+                "status": "failed",
+                "message": error_message,
+                "progress": 0,
+                "timestamp": time.time(),
+                "result": {
+                    "status": "error",
+                    "message": error_message,
+                    "year": year,
+                    "available_years": available_years
+                },
+                "meta": task_status[task_id].get("meta", {})
+            }
     
     # 添加到后台任务
     background_tasks.add_task(run_cleanup_task)
@@ -368,5 +465,8 @@ async def trigger_data_cleanup(background_tasks: BackgroundTasks):
     # 立即返回响应
     return {
         "status": "accepted",
-        "message": "数据清理任务已开始，将在后台执行。结果将记录在日志中。"
+        "message": "数据清理任务已开始，将在后台执行。可通过 /bilibili/popular/task/{task_id} 查询状态。",
+        "task_id": task_id,
+        "year": year,
+        "available_years": available_years
     } 
