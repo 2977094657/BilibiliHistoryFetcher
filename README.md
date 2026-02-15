@@ -181,6 +181,35 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## 赞助与支持
+
+如果本项目对你有帮助，欢迎通过以下方式赞助。付款时请在备注中填写“希望公开展示的链接”（如个人主页、B 站空间、GitHub 仓库等），我们会在 README 的“赞助鸣谢”表格中展示。
+
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <img src="./public/wechat.png" alt="微信收款码" width="220"><br>
+        微信赞助
+      </td>
+      <td align="center">
+        <img src="./public/zfb.jpg" alt="支付宝收款码" width="220"><br>
+        支付宝赞助
+      </td>
+    </tr>
+  </table>
+</div>
+
+### 赞助鸣谢
+
+| 联系内容                                              | 付款金额 |
+| ----------------------------------------------------- | -------- |
+| [星语半夏的个人空间-哔哩哔哩](https://b23.tv/WPHOtCS) | ￥15      |
+| 匿名微信用户 | ￥5      |
+| [EMP-NOVA13721RCL的个人空间-哔哩哔哩](https://space.bilibili.com/503193026) | ￥50   |
+
+提示：已赞助但未收录，请在 Issues 提交凭证与备注链接；如需匿名可说明。
+
 ## API 接口
 
 基础 URL: `http://localhost:8899`
@@ -305,35 +334,6 @@ BilibiliHistoryAnalyzer.exe
 - 小分辨率图片在资源管理器里可能无法预览（多见于表情、头像），使用浏览器打开可正常显示
 - 14 天为缓存可取回的上限，超过时间窗口的内容通常已被系统清理，无法恢复
 - 若无法直接从手机导出上述路径，请先在手机端完成压缩再拷贝 zip
-
-## 赞助与支持
-
-如果本项目对你有帮助，欢迎通过以下方式赞助。付款时请在备注中填写“希望公开展示的链接”（如个人主页、B 站空间、GitHub 仓库等），我们会在 README 的“赞助鸣谢”表格中展示。
-
-<div align="center">
-  <table>
-    <tr>
-      <td align="center">
-        <img src="./public/wechat.png" alt="微信收款码" width="220"><br>
-        微信赞助
-      </td>
-      <td align="center">
-        <img src="./public/zfb.jpg" alt="支付宝收款码" width="220"><br>
-        支付宝赞助
-      </td>
-    </tr>
-  </table>
-</div>
-
-### 赞助鸣谢
-
-| 联系内容                                              | 付款金额 |
-| ----------------------------------------------------- | -------- |
-| [星语半夏的个人空间-哔哩哔哩](https://b23.tv/WPHOtCS) | ￥15      |
-| 匿名微信用户 | ￥5      |
-
-提示：已赞助但未收录，请在 Issues 提交凭证与备注链接；如需匿名可说明。
-
 
 ## 贡献指南
 
