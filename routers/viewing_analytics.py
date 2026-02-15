@@ -633,16 +633,13 @@ def validate_year_and_get_table(year: Optional[int]) -> tuple:
         }
         return None, None, error_response
 
-    # 如果未指定年份，使用最新的年份
-    target_year = year if year is not None else available_years[0]
-
-    # 检查指定的年份是否可用
-    if year is not None and year not in available_years:
-        error_response = {
-            "status": "error",
-            "message": f"未找到 {year} 年的历史记录数据。可用的年份有：{', '.join(map(str, available_years))}"
-        }
-        return None, None, error_response
+    # 如果未指定年份，使用最新的年份；如果指定年份不存在，则自动回退到最新可用年份
+    if year is None:
+        target_year = available_years[0]
+    elif year in available_years:
+        target_year = year
+    else:
+        target_year = available_years[0]
 
     table_name = f"bilibili_history_{target_year}"
     return table_name, target_year, available_years
